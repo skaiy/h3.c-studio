@@ -443,6 +443,42 @@ On the clips tested, quality at 5-6 steps was comparable to the balanced preset,
 with sharper fine detail as the adapter's card advertises. An interactive
 session also amortizes transformer loading and text encoding across renders.
 
+
+#### Pause a long render and inspect a draft
+
+Progressive checkpoints let a final denoising schedule stop at a safe Euler
+transition. H3 saves the untouched video and audio sampler state, then projects
+a separate copy to sigma zero and decodes it as a normal draft MP4. The
+projection reuses the velocity from the completed transition; it does not run
+an extra DiT pass.
+
+Choose the final step budget at the start. This example plans a 20-step render
+but pauses after step 10:
+
+```sh
+PROMPT='A red fox walks through fresh snow in a pine forest. Medium tracking shot, natural winter light, realistic fur, soft footsteps and wind.'
+
+./h3 --profile \
+  -d ./MiniMax-H3 -p "$PROMPT" \
+  --width 512 --height 512 --frames 22 \
+  --steps 20 --layers 50 --reuse 1 --core-reuse 1 \
+  --checkpoint-after-step 10 \
+  --checkpoint outputs/fox-progress.h3ckpt \
+  -o outputs/fox-draft.mp4
+```
+
+If the direction looks right, continue the same schedule instead of starting
+again:
+
+```sh
+./h3 --profile \
+  -d ./MiniMax-H3 -p "$PROMPT" \
+  --width 512 --height 512 --frames 22 \
+  --steps 20 --layers 50 --reuse 1 --core-reuse 1 \
+  --resume outputs/fox-progress.h3ckpt \
+  -o outputs/fox-final.mp4
+```
+
 ## Tests and runtime requirements
 
 ```sh
