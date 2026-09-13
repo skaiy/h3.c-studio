@@ -17,7 +17,8 @@ const SIZES = [
   { label: '256 × 256 preview', w: 256, h: 256 },
 ]
 
-const PRESETS: { key: I18nKey; steps: number; layers: number; reuse: number }[] = [
+const PRESETS: { key: I18nKey; steps: number; layers: number; reuse: number; turbo?: boolean }[] = [
+  { key: 'presetTurbo', steps: 6, layers: 50, reuse: 1, turbo: true },
   { key: 'presetBalanced', steps: 20, layers: 45, reuse: 2 },
   { key: 'presetDraft', steps: 6, layers: 40, reuse: 3 },
   { key: 'presetHQ', steps: 20, layers: 50, reuse: 1 },
@@ -168,6 +169,7 @@ export default function Home() {
       last_frame: lastFrame[0] ?? null,
       ref_images: refImages,
       token_reduction: tokenReduction,
+      turbo: preset.turbo ?? false,
       label: null,
     }
     try {

@@ -15,6 +15,7 @@ export interface Shot {
   layers: number
   reuse: number
   seed: number
+  turbo?: boolean
   first_frame: string | null
   last_frame: string | null
   status: string
@@ -59,6 +60,7 @@ function newShot(idx: number): Shot {
     layers: 45,
     reuse: 2,
     seed: 42,
+    turbo: false,
     first_frame: null,
     last_frame: null,
     status: 'idle',
@@ -206,6 +208,17 @@ export default function BoardPage() {
                   <input type="number" value={s.seed}
                     onChange={(e) => update((b) => ({ ...b, shots: b.shots.map((x, xi) => (xi === i ? { ...x, seed: parseInt(e.target.value) || 0 } : x)) }))}
                     className="w-20 h-6 bg-black/30 border border-border px-1 text-[11px] mono ml-1 outline-none" />
+                </label>
+                <label className="bar !h-6">⚡Turbo
+                  <input type="checkbox" checked={!!s.turbo}
+                    onChange={(e) => update((bd) => ({ ...bd, shots: bd.shots.map((x, xi) => (xi === i ? {
+                      ...x,
+                      turbo: e.target.checked,
+                      steps: e.target.checked ? 6 : 20,
+                      layers: e.target.checked ? 50 : 45,
+                      reuse: e.target.checked ? 1 : 2,
+                    } : x)) }))}
+                    className="ml-1 accent-white" />
                 </label>
                 {board.chain && i > 0 && (
                   <span className="bar !h-6 text-muted-foreground/70">⇢ 首帧自动继承上镜末帧</span>

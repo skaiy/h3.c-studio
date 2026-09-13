@@ -24,7 +24,7 @@
 
 ### 引擎增强（已吸收的上游社区 PR）
 
-- **Turbo LoRA 折叠**（#14）：`tools/fold_turbo_lora.py` 将 5–6 步蒸馏采样直接烘焙进 checkpoint，提速 3–4 倍
+- **Turbo LoRA 折叠**（#14）：`tools/fold_turbo_lora.py` 将 5–6 步蒸馏采样直接烘焙进 checkpoint，提速 3–4 倍（Studio 内置「Turbo 6 步 ⚡」预设，一键切换折叠后的模型目录）
 - **断点续跑**（#2）：`--checkpoint` / `--resume` 长视频中途暂停出草稿、随时续跑
 - **进度与健壮性**：VAE 解码阶段进度上报（#35）、管道模式即时 flush（#62）、RGB 有限值保护（#9）、iPhone .mov 兼容（#31）
 
@@ -75,7 +75,7 @@ This repository forks h3.c and adds a `studio/` web workbench: a prompt studio, 
 
 ### Engine enhancements (absorbed upstream community PRs)
 
-- **Turbo LoRA folding** (#14): `tools/fold_turbo_lora.py` bakes 5–6 step distilled sampling into the checkpoint for a 3–4x speedup
+- **Turbo LoRA folding** (#14): `tools/fold_turbo_lora.py` bakes 5–6 step distilled sampling into the checkpoint for a 3–4x speedup (Studio ships a one-click "Turbo 6-step ⚡" preset wired to the folded model dir)
 - **Resumable checkpoints** (#2): `--checkpoint` / `--resume` pauses long renders with a sigma-zero draft and continues later
 - **Progress & robustness**: VAE decode progress reporting (#35), immediate pipe flush (#62), finite-RGB guard (#9), iPhone .mov tolerance (#31)
 

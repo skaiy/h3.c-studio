@@ -50,6 +50,7 @@ class GenRequest(BaseModel):
     last_frame: str | None = None
     ref_images: list[str] = []
     token_reduction: bool = False
+    turbo: bool = False              # use the folded Turbo-LoRA checkpoint (6-step distilled)
     label: str | None = None
 
 
@@ -65,7 +66,8 @@ def run_job(job_id: str):
     job = jobs[job_id]
     req: GenRequest = job["request"]
     out_name = f"studio-{job_id[:8]}.mp4"
-    cmd = [str(H3_BIN), "--profile", "-d", str(MODEL_DIR), "-p", req.prompt,
+    model_dir = H3_DIR / "MiniMax-H3-turbo" if req.turbo and (H3_DIR / "MiniMax-H3-turbo").exists() else MODEL_DIR
+    cmd = [str(H3_BIN), "--profile", "-d", str(model_dir), "-p", req.prompt,
            "--width", str(req.width), "--height", str(req.height),
            "--steps", str(req.steps), "--layers", str(req.layers),
            "--reuse", str(req.reuse), "--seed", str(req.seed),
@@ -150,6 +152,7 @@ class Shot(BaseModel):
     layers: int = 45
     reuse: int = 2
     seed: int = 42
+    turbo: bool = False
     first_frame: str | None = None
     last_frame: str | None = None
     status: str = "idle"          # idle / queued / running / done / error / skipped
@@ -187,7 +190,7 @@ def board_run_worker(board_id: str):
             shot["first_frame"] = extract_last_frame_of(prev_output)
         req = GenRequest(prompt=shot["prompt"], width=shot["width"], height=shot["height"],
                          seconds=shot["seconds"], steps=shot["steps"], layers=shot["layers"],
-                         reuse=shot["reuse"], seed=shot["seed"],
+                         reuse=shot["reuse"], seed=shot["seed"], turbo=shot.get("turbo", False),
                          first_frame=shot.get("first_frame"), last_frame=shot.get("last_frame"),
                          label=f"[{board['name']}] 镜头 {idx + 1}")
         job_id = uuid.uuid4().hex[:12]

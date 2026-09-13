@@ -12,6 +12,7 @@ export interface GenParams {
   last_frame: string | null
   ref_images: string[]
   token_reduction: boolean
+  turbo: boolean
   label: string | null
 }
 
