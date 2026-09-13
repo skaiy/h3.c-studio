@@ -98,6 +98,7 @@ export default function Home() {
   const [jobs, setJobs] = useState<Job[]>([])
   const [videos, setVideos] = useState<VideoItem[]>([])
   const [current, setCurrent] = useState<string | null>(null)
+  const [watchJob, setWatchJob] = useState(false)
   const [device, setDevice] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const logRef = useRef<HTMLDivElement>(null)
@@ -134,6 +135,12 @@ export default function Home() {
 
   const activeJob = jobs.find((j) => j.status === 'running') ?? jobs.find((j) => j.status === 'queued')
   const runningJob = activeJob?.status === 'running' ? activeJob : null
+
+  // Follow the job view whenever a job starts; user can freely switch away.
+  useEffect(() => {
+    if (runningJob) setWatchJob(true)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [runningJob?.id])
 
   useEffect(() => {
     if (!current && videos.length) setCurrent(videos[0].name)
@@ -177,10 +184,15 @@ export default function Home() {
     const r = await api.extractLastFrame(v.name)
     setFirstFrame([r.name])
     setRefImages([])
-    window.scrollTo({ top: 0 })
+  }
+
+  const playVideo = (name: string) => {
+    setCurrent(name)
+    setWatchJob(false)
   }
 
   const pct = runningJob && runningJob.total ? Math.round((runningJob.done / runningJob.total) * 100) : 0
+  const showJob = watchJob && runningJob
 
   return (
     <div className="h-full flex flex-col bg-background text-foreground overflow-hidden">
@@ -296,9 +308,19 @@ export default function Home() {
 
         {/* center preview */}
         <div className="flex-1 min-w-0 flex flex-col">
-          <div className="bar-invert">{t('preview')}</div>
+          <div className="flex items-stretch">
+            <div className="bar-invert">{t('preview')}</div>
+            {runningJob && !showJob && (
+              <button
+                onClick={() => setWatchJob(true)}
+                className="bar linkfade !text-white border-l border-border"
+              >
+                ● {runningJob.phase ?? t('starting')} {runningJob.done}/{runningJob.total || '…'} · {pct}%
+              </button>
+            )}
+          </div>
           <div className="flex-1 min-h-0 flex items-center justify-center bg-black/40 p-4">
-            {runningJob ? (
+            {showJob ? (
               <div className="w-full max-w-xl">
                 <div className="flex justify-between items-baseline mb-2">
                   <span className="text-[12px] uppercase tracking-[0.15em]">{runningJob.phase ?? t('starting')}</span>
@@ -331,36 +353,41 @@ export default function Home() {
             )}
           </div>
         </div>
-      </div>
 
-      {/* bottom filmstrip */}
-      <div className="shrink-0 border-t border-border">
-        <div className="flex items-stretch">
-          <div className="bar-invert">{t('library')}</div>
-          <div className="bar">{videos.length} {t('items')}</div>
-        </div>
-        <div className="flex gap-1 overflow-x-auto p-1">
-          {videos.map((v) => (
-            <div key={v.name} className="group relative shrink-0 w-36 border border-border">
-              <button className="block w-full" onClick={() => setCurrent(v.name)}>
-                <video src={`/outputs/${v.name}`} preload="metadata" muted
-                  className="w-full h-20 object-cover pointer-events-none" />
-              </button>
-              <div className="flex justify-between px-1 h-5 items-center">
-                <span className="mono text-[9px] text-muted-foreground truncate">{v.name.replace('.mp4', '')}</span>
-                <span className="mono text-[9px] text-muted-foreground">{fmtDur(v.duration)}</span>
+        {/* right library sidebar */}
+        <div className="w-44 shrink-0 border-l border-border flex flex-col min-h-0">
+          <div className="flex items-stretch shrink-0">
+            <div className="bar-invert">{t('library')}</div>
+            <div className="bar">{videos.length}</div>
+          </div>
+          <div className="flex-1 overflow-y-auto p-1 flex flex-col gap-1">
+            {videos.map((v) => (
+              <div
+                key={v.name}
+                className={`group relative shrink-0 border transition-colors ${
+                  current === v.name && !showJob ? 'border-white' : 'border-border'
+                }`}
+              >
+                <button className="block w-full" onClick={() => playVideo(v.name)}>
+                  <video src={`/outputs/${v.name}`} preload="metadata" muted
+                    className="w-full h-20 object-cover pointer-events-none" />
+                </button>
+                <div className="flex justify-between px-1 h-5 items-center">
+                  <span className="mono text-[9px] text-muted-foreground truncate">{v.name.replace('.mp4', '')}</span>
+                  <span className="mono text-[9px] text-muted-foreground">{fmtDur(v.duration)}</span>
+                </div>
+                <div className="absolute inset-x-0 top-0 h-20 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
+                  <button className="text-[10px] uppercase tracking-wider underline"
+                    onClick={() => playVideo(v.name)}>{t('play')}</button>
+                  <button className="text-[10px] uppercase tracking-wider underline"
+                    onClick={() => chainFrom(v)}>{t('chain')}</button>
+                </div>
               </div>
-              <div className="absolute inset-x-0 top-0 h-20 bg-black/70 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center gap-2">
-                <button className="text-[10px] uppercase tracking-wider underline"
-                  onClick={() => setCurrent(v.name)}>{t('play')}</button>
-                <button className="text-[10px] uppercase tracking-wider underline"
-                  onClick={() => chainFrom(v)}>{t('chain')}</button>
-              </div>
-            </div>
-          ))}
-          {videos.length === 0 && (
-            <div className="bar text-muted-foreground/60">{t('emptyLibrary')}</div>
-          )}
+            ))}
+            {videos.length === 0 && (
+              <div className="bar text-muted-foreground/60">{t('emptyLibrary')}</div>
+            )}
+          </div>
         </div>
       </div>
     </div>
