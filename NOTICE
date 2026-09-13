@@ -1,0 +1,29 @@
+h3.c-studio
+===========
+
+This repository is a fork of antirez/h3.c with an added web studio
+(`studio/` directory).
+
+Licensing
+---------
+
+- The h3-metal inference engine (all files outside `studio/`) is
+  Copyright (c) Salvatore Sanfilippo (antirez) and contributors,
+  licensed under the MIT License. See `LICENSE` in the repository root
+  and `THIRD_PARTY_NOTICES.md`.
+
+- H3 Studio (all files inside `studio/`) is Copyright (c) 2026 skaiy
+  and contributors, licensed under the Apache License, Version 2.0.
+  See `studio/LICENSE`.
+
+Model weights
+-------------
+
+Model weights are NOT included in this repository and are NOT covered
+by either license above. MiniMax-H3 weights are distributed separately
+under the MiniMax H3 Community License Agreement, which contains
+territorial and usage restrictions. Review the MiniMax-H3 model card
+on Hugging Face before downloading or deploying the weights.
+
+This project is an independent community effort and is not affiliated
+with, endorsed by, or sponsored by antirez or MiniMax.

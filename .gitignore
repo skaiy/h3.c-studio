@@ -28,3 +28,13 @@ h3_real_video_vae_test
 h3_semantic_vae_test
 libh3.a
 .DS_Store
+
+## Studio 开发环境
+studio/node_modules/
+studio/dist/
+studio/server/.venv/
+studio/uploads/
+
+# Local symlinks (engine weights & personal clip library stay local)
+outputs
+MiniMax-H3

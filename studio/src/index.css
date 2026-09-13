@@ -1,0 +1,83 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    /* Industrial monochrome — chrome disappears, footage carries the color. */
+    --background: 0 0% 22.4%;       /* #393939 */
+    --foreground: 0 0% 100%;
+    --card: 0 0% 32.9%;             /* #545454 */
+    --card-foreground: 0 0% 100%;
+    --popover: 0 0% 22.4%;
+    --popover-foreground: 0 0% 100%;
+    --primary: 0 0% 100%;
+    --primary-foreground: 0 0% 0%;
+    --secondary: 0 0% 32.9%;
+    --secondary-foreground: 0 0% 100%;
+    --muted: 0 0% 32.9%;
+    --muted-foreground: 0 0% 62.7%;   /* #a0a0a0 */
+    --accent: 0 0% 62.7%;
+    --accent-foreground: 0 0% 0%;
+    --destructive: 0 0% 0%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 0 0% 32.9%;
+    --input: 0 0% 32.9%;
+    --ring: 0 0% 100%;
+    --radius: 0px;
+    --sidebar-background: 0 0% 22.4%;
+    --sidebar-foreground: 0 0% 100%;
+    --sidebar-primary: 0 0% 100%;
+    --sidebar-primary-foreground: 0 0% 0%;
+    --sidebar-accent: 0 0% 32.9%;
+    --sidebar-accent-foreground: 0 0% 100%;
+    --sidebar-border: 0 0% 32.9%;
+    --sidebar-ring: 0 0% 100%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html, body, #root {
+    height: 100%;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: -apple-system, "PingFang SC", "Helvetica Neue", sans-serif;
+    font-feature-settings: "tnum";
+  }
+
+  *::-webkit-scrollbar {
+    display: none;
+  }
+
+  ::selection {
+    background: #ffffff;
+    color: #000000;
+  }
+}
+
+@layer components {
+  /* Flat index-label bar: the reference's 1rem tracked uppercase strip. */
+  .bar {
+    @apply flex items-center h-7 px-2 text-[11px] font-semibold uppercase tracking-[0.18em] text-muted-foreground select-none;
+  }
+  .bar-invert {
+    @apply flex items-center h-7 px-2 text-[11px] font-semibold uppercase tracking-[0.18em] bg-white text-black select-none;
+  }
+  .panel {
+    @apply bg-card/40 border border-border;
+  }
+  .mono {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-feature-settings: "tnum";
+  }
+  .linkfade {
+    transition: opacity 0.333s cubic-bezier(0.25, 0.46, 0.45, 0.94);
+  }
+  .linkfade:hover {
+    @apply opacity-70;
+  }
+}
