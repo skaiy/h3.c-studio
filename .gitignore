@@ -38,3 +38,4 @@ studio/uploads/
 # Local symlinks (engine weights & personal clip library stay local)
 outputs
 MiniMax-H3
+studio/storyboards.json

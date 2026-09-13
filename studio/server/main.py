@@ -125,6 +125,161 @@ def launch_next():
 
 # ---------------------------------------------------------------- routes
 
+# ---------------------------------------------------------------- storyboards
+
+BOARDS_FILE = ROOT / "storyboards.json"
+boards: dict[str, dict] = {}
+if BOARDS_FILE.exists():
+    try:
+        boards = json.loads(BOARDS_FILE.read_text())
+    except Exception:                                            # noqa: BLE001
+        boards = {}
+
+
+def save_boards():
+    BOARDS_FILE.write_text(json.dumps(boards, ensure_ascii=False, indent=1))
+
+
+class Shot(BaseModel):
+    id: str
+    prompt: str
+    width: int = 512
+    height: int = 512
+    seconds: float = 6
+    steps: int = 20
+    layers: int = 45
+    reuse: int = 2
+    seed: int = 42
+    first_frame: str | None = None
+    last_frame: str | None = None
+    status: str = "idle"          # idle / queued / running / done / error / skipped
+    output: str | None = None
+    job_id: str | None = None
+
+
+class Board(BaseModel):
+    id: str
+    name: str = "未命名分镜"
+    chain: bool = True            # auto last-frame -> next first-frame
+    shots: list[Shot] = []
+    status: str = "idle"          # idle / running / done / error
+    result: str | None = None     # concatenated output name
+
+
+def extract_last_frame_of(video_name: str) -> str:
+    src = OUTPUTS / video_name
+    out = UPLOADS / f"chain-{int(time.time())}-{Path(video_name).stem}.png"
+    subprocess.run(["ffmpeg", "-y", "-v", "error", "-sseof", "-0.05",
+                    "-i", str(src), "-vframes", "1", str(out)],
+                   capture_output=True, check=True)
+    return out.name
+
+
+def board_run_worker(board_id: str):
+    board = boards[board_id]
+    prev_output = None
+    for idx, shot in enumerate(board["shots"]):
+        if not shot["prompt"].strip():
+            shot["status"] = "skipped"
+            save_boards()
+            continue
+        if board["chain"] and prev_output:
+            shot["first_frame"] = extract_last_frame_of(prev_output)
+        req = GenRequest(prompt=shot["prompt"], width=shot["width"], height=shot["height"],
+                         seconds=shot["seconds"], steps=shot["steps"], layers=shot["layers"],
+                         reuse=shot["reuse"], seed=shot["seed"],
+                         first_frame=shot.get("first_frame"), last_frame=shot.get("last_frame"),
+                         label=f"[{board['name']}] 镜头 {idx + 1}")
+        job_id = uuid.uuid4().hex[:12]
+        jobs[job_id] = {"id": job_id, "request": req, "status": "queued",
+                        "created": time.time(), "log": [], "phase": None,
+                        "done": 0, "total": 0, "label": req.label}
+        shot.update(status="queued", job_id=job_id)
+        save_boards()
+        queue.append(job_id)
+        launch_next()
+        # wait for this shot to finish before chaining the next
+        while True:
+            time.sleep(3)
+            st = jobs[job_id]["status"]
+            shot["status"] = "running" if st == "running" else st
+            if st in ("done", "error", "cancelled"):
+                break
+        if jobs[job_id]["status"] != "done":
+            shot["status"] = jobs[job_id]["status"]
+            board["status"] = "error"
+            save_boards()
+            return
+        prev_output = jobs[job_id].get("output")
+        prev_output = Path(prev_output).name if prev_output else None
+        shot.update(status="done", output=prev_output)
+        save_boards()
+    board["status"] = "done"
+    save_boards()
+
+
+@app.get("/api/boards")
+def list_boards():
+    return list(boards.values())
+
+
+@app.post("/api/boards")
+def upsert_board(board: Board):
+    if not board.id:
+        board.id = uuid.uuid4().hex[:8]
+    boards[board.id] = board.model_dump()
+    save_boards()
+    return boards[board.id]
+
+
+@app.delete("/api/boards/{board_id}")
+def delete_board(board_id: str):
+    boards.pop(board_id, None)
+    save_boards()
+    return {"ok": True}
+
+
+@app.post("/api/boards/{board_id}/run")
+def run_board(board_id: str):
+    board = boards.get(board_id)
+    if not board:
+        raise HTTPException(404)
+    if board["status"] == "running":
+        raise HTTPException(409, "board already running")
+    if not board["shots"]:
+        raise HTTPException(400, "no shots")
+    board["status"] = "running"
+    board["result"] = None
+    for s in board["shots"]:
+        if s["status"] != "done":
+            s.update(status="idle", output=None)
+    save_boards()
+    threading.Thread(target=board_run_worker, args=(board_id,), daemon=True).start()
+    return {"ok": True}
+
+
+@app.post("/api/boards/{board_id}/concat")
+def concat_board(board_id: str):
+    board = boards.get(board_id)
+    if not board:
+        raise HTTPException(404)
+    outputs = [s["output"] for s in board["shots"] if s.get("output")]
+    if len(outputs) < 2:
+        raise HTTPException(400, "need at least 2 finished shots")
+    list_file = UPLOADS / f"concat-{board_id}.txt"
+    list_file.write_text("".join(f"file '{OUTPUTS / o}'\n" for o in outputs))
+    out_name = f"board-{board_id}-{int(time.time())}.mp4"
+    r = subprocess.run(["ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0",
+                        "-i", str(list_file), "-c", "copy", str(OUTPUTS / out_name)],
+                       capture_output=True, text=True)
+    list_file.unlink(missing_ok=True)
+    if r.returncode != 0:
+        raise HTTPException(500, r.stderr[-300:])
+    board["result"] = out_name
+    save_boards()
+    return {"output": out_name}
+
+
 @app.get("/api/info")
 def info():
     out = subprocess.run([str(H3_BIN), "--info", "-d", str(MODEL_DIR)],

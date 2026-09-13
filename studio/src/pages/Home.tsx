@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { Link } from 'react-router'
 import { api, type GenParams, type Job, type VideoItem } from '@/lib/api'
 import { useI18n, type I18nKey } from '@/lib/i18n'
 import { Button } from '@/components/ui/button'
@@ -199,6 +200,8 @@ export default function Home() {
       {/* header */}
       <div className="flex items-stretch border-b border-border shrink-0">
         <div className="bar-invert">{t('title')}</div>
+        <div className="bar !text-white border-b border-white -mb-px">{t('studio')}</div>
+        <Link to="/board" className="bar linkfade">{t('board')}</Link>
         <div className="bar">{t('subtitle')}</div>
         <div className="flex-1" />
         <div className="bar mono normal-case tracking-normal">{device || '…'}</div>
