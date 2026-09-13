@@ -378,6 +378,17 @@ def videos():
     return items
 
 
+@app.delete("/api/videos/{name}")
+def delete_video(name: str):
+    if "/" in name or ".." in name:
+        raise HTTPException(400, "invalid name")
+    target = OUTPUTS / name
+    if not target.exists() or target.suffix != ".mp4":
+        raise HTTPException(404)
+    target.unlink()
+    return {"ok": True}
+
+
 app.mount("/outputs", StaticFiles(directory=OUTPUTS), name="outputs")
 app.mount("/uploads", StaticFiles(directory=UPLOADS), name="uploads")
 

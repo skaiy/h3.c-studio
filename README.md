@@ -17,9 +17,16 @@
 - 🎛 **提示词工作室**：Scene / Action / Camera / Look / Audio 五段式编辑，6 种画幅，1–15 秒时长，4 档速度/画质预设，seed 控制
 - 🖼 **条件输入**：首帧 / 尾帧锚点、多张参考图（Ref2VA），拖拽上传
 - 📈 **实时进度**：分阶段进度条（文本编码 → 去噪 → VAE 解码）+ 日志流，可取消任务
-- 🎞 **作品库**：自动索引生成历史，在线播放
+- 🎞 **作品库**：自动索引生成历史，点播播放，支持删除（二次确认）
 - 🔗 **末帧接力**：一键抽取任意视频末帧作为下一条的首帧，实现多镜头连贯叙事
+- 🎬 **分镜板**：多镜头卡片序列 + 自动末帧接力链 + 一键无损拼接导出，多镜头叙事点几下就完成
 - 🌐 **i18n**：中文 / English 一键切换
+
+### 引擎增强（已吸收的上游社区 PR）
+
+- **Turbo LoRA 折叠**（#14）：`tools/fold_turbo_lora.py` 将 5–6 步蒸馏采样直接烘焙进 checkpoint，提速 3–4 倍
+- **断点续跑**（#2）：`--checkpoint` / `--resume` 长视频中途暂停出草稿、随时续跑
+- **进度与健壮性**：VAE 解码阶段进度上报（#35）、管道模式即时 flush（#62）、RGB 有限值保护（#9）、iPhone .mov 兼容（#31）
 
 ### 快速开始
 
@@ -61,9 +68,16 @@ This repository forks h3.c and adds a `studio/` web workbench: a prompt studio, 
 - 🎛 **Prompt studio**: Scene / Action / Camera / Look / Audio structured editing, 6 canvas sizes, 1–15s duration, 4 speed/quality presets, seed control
 - 🖼 **Conditioning**: first/last frame anchors and multiple Ref2VA reference images with drag upload
 - 📈 **Live progress**: per-phase progress (text encode → denoise → VAE decode) with log stream and cancellable jobs
-- 🎞 **Clip library**: automatic history indexing with in-browser playback
+- 🎞 **Clip library**: automatic history indexing, click-to-play, deletable (two-step confirm)
 - 🔗 **Chain last frame**: extract any clip's last frame as the next generation's first frame for coherent multi-shot storytelling
+- 🎬 **Storyboard**: multi-shot cards + automatic last-frame chaining + one-click lossless concat export
 - 🌐 **i18n**: one-click 中文 / English switch
+
+### Engine enhancements (absorbed upstream community PRs)
+
+- **Turbo LoRA folding** (#14): `tools/fold_turbo_lora.py` bakes 5–6 step distilled sampling into the checkpoint for a 3–4x speedup
+- **Resumable checkpoints** (#2): `--checkpoint` / `--resume` pauses long renders with a sigma-zero draft and continues later
+- **Progress & robustness**: VAE decode progress reporting (#35), immediate pipe flush (#62), finite-RGB guard (#9), iPhone .mov tolerance (#31)
 
 ### Quick start
 

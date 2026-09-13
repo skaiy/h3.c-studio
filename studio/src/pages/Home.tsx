@@ -100,6 +100,7 @@ export default function Home() {
   const [videos, setVideos] = useState<VideoItem[]>([])
   const [current, setCurrent] = useState<string | null>(null)
   const [watchJob, setWatchJob] = useState(false)
+  const [confirmDel, setConfirmDel] = useState<string | null>(null)
   const [device, setDevice] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const logRef = useRef<HTMLDivElement>(null)
@@ -142,10 +143,6 @@ export default function Home() {
     if (runningJob) setWatchJob(true)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runningJob?.id])
-
-  useEffect(() => {
-    if (!current && videos.length) setCurrent(videos[0].name)
-  }, [videos, current])
 
   const doUpload = (setter: React.Dispatch<React.SetStateAction<string[]>>, multiple: boolean) =>
     async (f: File) => {
@@ -190,6 +187,18 @@ export default function Home() {
   const playVideo = (name: string) => {
     setCurrent(name)
     setWatchJob(false)
+  }
+
+  const deleteVideo = async (name: string) => {
+    if (confirmDel !== name) {
+      setConfirmDel(name)
+      setTimeout(() => setConfirmDel((c) => (c === name ? null : c)), 3000)
+      return
+    }
+    setConfirmDel(null)
+    await fetch(`/api/videos/${encodeURIComponent(name)}`, { method: 'DELETE' })
+    if (current === name) setCurrent(null)
+    await refresh()
   }
 
   const pct = runningJob && runningJob.total ? Math.round((runningJob.done / runningJob.total) * 100) : 0
@@ -384,6 +393,12 @@ export default function Home() {
                     onClick={() => playVideo(v.name)}>{t('play')}</button>
                   <button className="text-[10px] uppercase tracking-wider underline"
                     onClick={() => chainFrom(v)}>{t('chain')}</button>
+                  <button
+                    className={`text-[10px] uppercase tracking-wider underline ${confirmDel === v.name ? 'text-white bg-black border border-white px-1' : ''}`}
+                    onClick={() => deleteVideo(v.name)}
+                  >
+                    {confirmDel === v.name ? t('confirmDelete') : t('delete')}
+                  </button>
                 </div>
               </div>
             ))}
