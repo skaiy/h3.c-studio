@@ -12,9 +12,9 @@ Licensing
   licensed under the MIT License. See `LICENSE` in the repository root
   and `THIRD_PARTY_NOTICES.md`.
 
-- H3 Studio (all files inside `studio/`) is Copyright (c) 2026 skaiy
-  and contributors, licensed under the Apache License, Version 2.0.
-  See `studio/LICENSE`.
+- H3 Studio (all files inside `studio/`) is Copyright (c) 2026
+  diaoguoliang and contributors, licensed under the Apache License,
+  Version 2.0. See `studio/LICENSE`.
 
 Model weights
 -------------
