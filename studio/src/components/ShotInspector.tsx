@@ -1,10 +1,34 @@
-import { useRef } from 'react'
+import { useRef, useState } from 'react'
 import { api, type Shot } from '@/lib/api'
 import { type I18nKey } from '@/lib/i18n'
 import { useI18n } from '@/lib/useI18n'
 import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
 import { Textarea } from '@/components/ui/textarea'
+
+// Structured "Context-IR" prompt editor (Scene / Action / Camera / Look / Audio),
+// inspired by Henninges/h3-studio's advanced mode: each field falls back to a
+// sensible default when left blank, so users don't have to write out every
+// clause by hand to get a well-formed five-part prompt.
+const FIELD_KEYS = ['scene', 'action', 'camera', 'look', 'audio'] as const
+type FieldKey = (typeof FIELD_KEYS)[number]
+const FIELD_LABELS: Record<FieldKey, string> = {
+  scene: 'Scene', action: 'Action', camera: 'Camera', look: 'Look', audio: 'Audio',
+}
+const FIELD_DEFAULTS: Record<FieldKey, string> = {
+  scene: 'a softly lit interior room',
+  action: 'the subject moves naturally',
+  camera: 'static medium shot',
+  look: 'realistic, cinematic lighting',
+  audio: 'ambient sound matching the scene',
+}
+function emptyFields(): Record<FieldKey, string> {
+  return { scene: '', action: '', camera: '', look: '', audio: '' }
+}
+function assembleStructuredPrompt(fields: Record<FieldKey, string>): string {
+  const val = (k: FieldKey) => fields[k].trim() || FIELD_DEFAULTS[k]
+  return FIELD_KEYS.map((k) => `${FIELD_LABELS[k]}: ${val(k)}.`).join(' ')
+}
 
 const SIZES = [
   { label: '512 × 512', w: 512, h: 512 },
@@ -65,6 +89,43 @@ function UploadSlot({ title, files, removeLabel, onAdd, onRemove, multiple }: Sl
   )
 }
 
+interface AudioSlotProps {
+  title: string
+  files: string[]
+  removeLabel: string
+  onAdd: (f: File) => void
+  onRemove: (name: string) => void
+}
+
+/** Ordered standalone Ref2VA audio clips (--ref-audio) — e.g. lip-sync / music-video
+ * conditioning. Uses inline <audio controls> instead of the square thumbnails
+ * UploadSlot uses for images, since a filename + playhead is more useful than a tile. */
+function AudioSlot({ title, files, removeLabel, onAdd, onRemove }: AudioSlotProps) {
+  const inputRef = useRef<HTMLInputElement>(null)
+  return (
+    <div>
+      <div className="bar">{title}</div>
+      <div className="flex flex-col gap-1 px-2 pb-2">
+        {files.map((f) => (
+          <div key={f} className="flex items-center gap-1.5 border border-border px-1.5 py-1">
+            <audio controls src={`/api/media/${f}`} className="h-7 flex-1 min-w-0" />
+            <button onClick={() => onRemove(f)}
+              className="shrink-0 text-[10px] text-muted-foreground hover:text-white px-1">
+              {removeLabel}
+            </button>
+          </div>
+        ))}
+        <button onClick={() => inputRef.current?.click()}
+          className="h-7 border border-dashed border-muted-foreground/50 text-muted-foreground text-[11px] hover:text-white hover:border-white transition-colors">
+          +
+        </button>
+        <input ref={inputRef} type="file" accept="audio/*" className="hidden"
+          onChange={(e) => { const f = e.target.files?.[0]; if (f) onAdd(f); e.target.value = '' }} />
+      </div>
+    </div>
+  )
+}
+
 interface Props {
   shot: Shot
   chain: boolean
@@ -76,11 +137,22 @@ interface Props {
 
 export default function ShotInspector({ shot, chain, isFirst, onChange, onGenerate, generating }: Props) {
   const { t } = useI18n()
+  const [promptMode, setPromptMode] = useState<'simple' | 'structured'>('simple')
+  const [fields, setFields] = useState<Record<FieldKey, string>>(emptyFields())
+  // Structured fields are a per-shot input aid, not persisted state: reset them
+  // whenever the selected shot changes so they never leak between shots. Done
+  // during render (not in an effect) per React's "adjusting state" guidance.
+  const [fieldsShotId, setFieldsShotId] = useState(shot.id)
+  if (fieldsShotId !== shot.id) {
+    setFieldsShotId(shot.id)
+    setFields(emptyFields())
+  }
   const pIdx = presetIndexOf(shot)
   const sizeIdx = (() => { const i = SIZES.findIndex((z) => z.w === shot.width && z.h === shot.height); return i >= 0 ? i : 1 })()
   const firstFrame = shot.first_frame ? [shot.first_frame] : []
   const lastFrame = shot.last_frame ? [shot.last_frame] : []
   const refImages: string[] = (shot as unknown as { ref_images?: string[] }).ref_images ?? []
+  const refAudio: string[] = (shot as unknown as { ref_audio?: string[] }).ref_audio ?? []
   const ckptSteps = (shot as unknown as { checkpoint_after_step?: number }).checkpoint_after_step ?? 0
 
   const up = (key: 'first_frame' | 'last_frame') => async (f: File) => {
@@ -91,17 +163,49 @@ export default function ShotInspector({ shot, chain, isFirst, onChange, onGenera
     const r = await api.upload(f)
     onChange({ ref_images: [...refImages, r.name] } as Partial<Shot>)
   }
+  const upRefAudio = async (f: File) => {
+    const r = await api.upload(f)
+    onChange({ ref_audio: [...refAudio, r.name] } as Partial<Shot>)
+  }
 
   const busy = shot.status === 'running' || shot.status === 'queued'
 
   return (
     <div className="w-[340px] shrink-0 border-l border-border overflow-y-auto flex flex-col">
-      <div className="bar-invert">{t('prompt')}</div>
-      <div className="p-2">
-        <Textarea value={shot.prompt} onChange={(e) => onChange({ prompt: e.target.value })}
-          placeholder="Scene / Action / Camera / Look / Audio…"
-          className="min-h-[160px] bg-black/30 border-border rounded-none text-[13px] leading-relaxed mono" />
+      <div className="bar-invert justify-between">
+        <span>{t('prompt')}</span>
+        <div className="flex gap-1">
+          {(['simple', 'structured'] as const).map((m) => (
+            <button key={m} onClick={() => setPromptMode(m)}
+              className={`text-[10px] px-1.5 py-0.5 border normal-case tracking-normal font-normal ${m === promptMode ? 'bg-black text-white border-black' : 'border-black/30 text-black/60 hover:text-black'}`}>
+              {t(m === 'simple' ? 'promptModeSimple' : 'promptModeStructured')}
+            </button>
+          ))}
+        </div>
       </div>
+      {promptMode === 'simple' ? (
+        <div className="p-2">
+          <Textarea value={shot.prompt} onChange={(e) => onChange({ prompt: e.target.value })}
+            placeholder="Scene / Action / Camera / Look / Audio…"
+            className="min-h-[160px] bg-black/30 border-border rounded-none text-[13px] leading-relaxed mono" />
+        </div>
+      ) : (
+        <div className="p-2 flex flex-col gap-1.5">
+          {FIELD_KEYS.map((k) => (
+            <div key={k}>
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-0.5">{FIELD_LABELS[k]}</div>
+              <Textarea value={fields[k]}
+                onChange={(e) => {
+                  const next = { ...fields, [k]: e.target.value }
+                  setFields(next)
+                  onChange({ prompt: assembleStructuredPrompt(next) })
+                }}
+                placeholder={FIELD_DEFAULTS[k]}
+                className="min-h-[36px] bg-black/30 border-border rounded-none text-[12px] leading-snug mono" />
+            </div>
+          ))}
+        </div>
+      )}
 
       <div className="bar">{t('canvas')}</div>
       <div className="grid grid-cols-2 gap-1 p-2">
@@ -161,6 +265,8 @@ export default function ShotInspector({ shot, chain, isFirst, onChange, onGenera
         onAdd={up('last_frame')} onRemove={() => onChange({ last_frame: null })} />
       <UploadSlot title={t('refImages')} files={refImages} multiple removeLabel={t('remove')}
         onAdd={upRef} onRemove={(n) => onChange({ ref_images: refImages.filter((x) => x !== n) } as Partial<Shot>)} />
+      <AudioSlot title={t('refAudio')} files={refAudio} removeLabel={t('remove')}
+        onAdd={upRefAudio} onRemove={(n) => onChange({ ref_audio: refAudio.filter((x) => x !== n) } as Partial<Shot>)} />
 
       <div className="p-2 mt-auto">
         <Button onClick={onGenerate} disabled={generating || busy || !shot.prompt.trim()}

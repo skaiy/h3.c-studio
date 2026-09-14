@@ -10,7 +10,7 @@
 
 **H3 Studio — [antirez/h3.c](https://github.com/antirez/h3.c)（MiniMax-H3 Apple Silicon 原生推理引擎）的第二个图形界面。**
 
-本仓库是 h3.c 的 fork，在原引擎基础上增加了 `studio/` Web 工作台：提示词工作室、条件输入管理（首帧/尾帧/参考图）、实时生成进度、作品库与「末帧接力」分镜工作流，中英双语界面。
+本仓库是 h3.c 的 fork，在原引擎基础上增加了 `studio/` Web 工作台：提示词工作室、条件输入管理（首帧/尾帧/参考图/参考音频）、实时生成进度、作品库与「末帧接力」分镜工作流，界面支持中/英/日/韩/德五语言。
 
 > 引擎本体（根目录全部文件）仍为 antirez 的 MIT 项目，未做任何功能修改；我们只做加法。详见 [NOTICE](NOTICE)。
 
@@ -23,20 +23,24 @@
 | ![统一工作台](docs/media/workspace.jpg) | ![分镜板切换](docs/media/board-switcher.jpg) |
 
 
-- 🎛 **提示词工作室**：Scene / Action / Camera / Look / Audio 五段式编辑，6 种画幅，1–15 秒时长，4 档速度/画质预设，seed 控制
-- 🖼 **条件输入**：首帧 / 尾帧锚点、多张参考图（Ref2VA），拖拽上传
+- 🎛 **提示词工作室**：简易自由文本 / 结构化 Context-IR 双模式——结构化模式下 Scene / Action / Camera / Look / Audio 五个独立输入框，留空字段自动套用智能默认值再拼装成最终提示词；6 种画幅，1–15 秒时长，4 档速度/画质预设，seed 控制
+- 🖼 **条件输入**：首帧 / 尾帧锚点、多张参考图（Ref2VA）、参考音频（音画同步条件输入），均支持拖拽上传
 - 📈 **实时进度**：分阶段进度条（文本编码 → 去噪 → VAE 解码）+ 日志流，可取消任务
 - 💾 **任务持久化**：任务状态落盘（`jobs.json`），重启进程后历史与进度不丢失，未完成的任务自动标记为「已中断」
 - 🎞 **作品库**：自动索引生成历史，点播播放，支持删除（二次确认）
 - 🔗 **末帧接力**：一键抽取任意视频末帧作为下一条的首帧，实现多镜头连贯叙事
 - 🎬 **分镜板**：多镜头卡片序列 + 自动末帧接力链 + 一键无损拼接导出，多镜头叙事点几下就完成
-- 🌐 **i18n**：中文 / English 一键切换
+- 🌐 **i18n**：中文 / English / 日本語 / 한국어 / Deutsch 一键切换
 
 ### 引擎增强（已吸收的上游社区 PR）
 
 - **Turbo LoRA 折叠**（#14）：`tools/fold_turbo_lora.py` 将 5–6 步蒸馏采样直接烘焙进 checkpoint，提速 3–4 倍（Studio 内置「Turbo 6 步 ⚡」预设，一键切换折叠后的模型目录）
 - **断点续跑**（#2）：`--checkpoint` / `--resume` 长视频中途暂停出草稿、随时续跑
 - **进度与健壮性**：VAE 解码阶段进度上报（#35）、管道模式即时 flush（#62）、RGB 有限值保护（#9）、iPhone .mov 兼容（#31）
+
+### 社区互鉴
+
+同为 h3.c 图形界面的 [Henninges/h3-studio](https://github.com/Henninges/h3-studio)（专精音乐视频/唇形同步工作流）启发了本项目两个功能：结构化提示词的空字段智能默认值、以及参考音频条件输入（`--ref-audio`）。开源生态互相学习，感谢 Henninges 的分享。
 
 ### 深度阅读
 
@@ -79,7 +83,7 @@ H3_STUDIO_TOKEN=your-secret-token npm run dev
 
 **H3 Studio — the second GUI for [antirez/h3.c](https://github.com/antirez/h3.c), the native Apple Silicon inference engine for MiniMax-H3.**
 
-This repository forks h3.c and adds a `studio/` web workbench: a prompt studio, conditioning management (first/last frame + reference images), live generation progress, a clip library, and a "chain last frame" storyboard workflow. Bilingual UI (中文 / English).
+This repository forks h3.c and adds a `studio/` web workbench: a prompt studio, conditioning management (first/last frame + reference images + reference audio), live generation progress, a clip library, and a "chain last frame" storyboard workflow. UI available in 5 languages (中文 / English / 日本語 / 한국어 / Deutsch).
 
 > The engine itself (everything at repo root) remains antirez's MIT project, unmodified — we only add on top. See [NOTICE](NOTICE).
 
@@ -92,20 +96,24 @@ This repository forks h3.c and adds a `studio/` web workbench: a prompt studio, 
 | ![Unified Workspace](docs/media/workspace.jpg) | ![Board Switcher](docs/media/board-switcher.jpg) |
 
 
-- 🎛 **Prompt studio**: Scene / Action / Camera / Look / Audio structured editing, 6 canvas sizes, 1–15s duration, 4 speed/quality presets, seed control
-- 🖼 **Conditioning**: first/last frame anchors and multiple Ref2VA reference images with drag upload
+- 🎛 **Prompt studio**: Simple free-text mode or structured Context-IR mode — five independent Scene / Action / Camera / Look / Audio fields, each falling back to a sensible default when left blank before being assembled into the final prompt; 6 canvas sizes, 1–15s duration, 4 speed/quality presets, seed control
+- 🖼 **Conditioning**: first/last frame anchors, multiple Ref2VA reference images, and reference audio (for audio-driven sync) — all with drag upload
 - 📈 **Live progress**: per-phase progress (text encode → denoise → VAE decode) with log stream and cancellable jobs
 - 💾 **Job persistence**: job state is saved to disk (`jobs.json`), so history and progress survive a backend restart; unfinished jobs are auto-marked "interrupted"
 - 🎞 **Clip library**: automatic history indexing, click-to-play, deletable (two-step confirm)
 - 🔗 **Chain last frame**: extract any clip's last frame as the next generation's first frame for coherent multi-shot storytelling
 - 🎬 **Storyboard**: multi-shot cards + automatic last-frame chaining + one-click lossless concat export
-- 🌐 **i18n**: one-click 中文 / English switch
+- 🌐 **i18n**: one-click switch between 中文 / English / 日本語 / 한국어 / Deutsch
 
 ### Engine enhancements (absorbed upstream community PRs)
 
 - **Turbo LoRA folding** (#14): `tools/fold_turbo_lora.py` bakes 5–6 step distilled sampling into the checkpoint for a 3–4x speedup (Studio ships a one-click "Turbo 6-step ⚡" preset wired to the folded model dir)
 - **Resumable checkpoints** (#2): `--checkpoint` / `--resume` pauses long renders with a sigma-zero draft and continues later
 - **Progress & robustness**: VAE decode progress reporting (#35), immediate pipe flush (#62), finite-RGB guard (#9), iPhone .mov tolerance (#31)
+
+### Cross-pollination
+
+[Henninges/h3-studio](https://github.com/Henninges/h3-studio) — another web GUI for h3.c, specialized for the music-video / lip-sync workflow — inspired two features here: smart defaults for empty structured-prompt fields, and reference-audio conditioning (`--ref-audio`). Thanks to Henninges for sharing; open-source GUIs for the same engine learning from each other is exactly how this should go.
 
 ### Further reading
 

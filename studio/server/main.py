@@ -79,6 +79,7 @@ class GenRequest(BaseModel):
     first_frame: str | None = None     # filename inside uploads/ or outputs/
     last_frame: str | None = None
     ref_images: list[str] = []
+    ref_audio: list[str] = []        # ordered standalone Ref2VA audio clips (--ref-audio)
     token_reduction: bool = False
     turbo: bool = False              # use the folded Turbo-LoRA checkpoint (6-step distilled)
     checkpoint_after_step: int | None = None   # pause after N steps, save ckpt + sigma-zero draft
@@ -160,6 +161,8 @@ def run_job(job_id: str):
         cmd += ["--last-frame", str(resolve_file(req.last_frame))]
     for r in req.ref_images:
         cmd += ["--ref-image", str(resolve_file(r))]
+    for r in req.ref_audio:
+        cmd += ["--ref-audio", str(resolve_file(r))]
     if req.token_reduction:
         cmd.append("--token-reduction")
     if req.checkpoint_after_step:

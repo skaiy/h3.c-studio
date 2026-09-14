@@ -100,6 +100,30 @@ def test_cancel_queued_job_removes_from_queue(app_env, client, monkeypatch):
     client.delete(f"/api/jobs/{first}")
 
 
+def test_generate_includes_ref_audio_flag(app_env, client, monkeypatch):
+    """--ref-audio (inspired by Henninges/h3-studio's audio-conditioning
+    workflow) should be appended once per ordered ref_audio entry, resolved
+    against the uploads dir just like --ref-image already is."""
+    (app_env.UPLOADS / "song.mp3").write_bytes(b"fake-audio")
+    captured = []
+    monkeypatch.setattr(
+        app_env.subprocess, "Popen",
+        make_fake_popen(["h3: wrote /tmp/audio-out.mp4"], returncode=0, capture=captured),
+    )
+    r = client.post("/api/generate", json={
+        "prompt": "a singer performing on stage",
+        "ref_audio": ["song.mp3"],
+    })
+    job_id = r.json()["job_id"]
+    wait_for_status(client, job_id, {"done", "error"})
+
+    assert len(captured) == 1
+    cmd = captured[0]
+    assert "--ref-audio" in cmd
+    idx = cmd.index("--ref-audio")
+    assert cmd[idx + 1].endswith("song.mp3")
+
+
 def test_list_jobs_sorted_newest_first(app_env, client, monkeypatch):
     monkeypatch.setattr(
         app_env.subprocess, "Popen",

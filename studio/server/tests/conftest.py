@@ -74,9 +74,15 @@ class FakeProc:
         self.returncode = -15
 
 
-def make_fake_popen(output_lines, returncode=0):
-    """Returns a function suitable for monkeypatch.setattr(module.subprocess, "Popen", ...)."""
+def make_fake_popen(output_lines, returncode=0, capture=None):
+    """Returns a function suitable for monkeypatch.setattr(module.subprocess, "Popen", ...).
+
+    If `capture` is a list, the cmd argv passed to Popen(cmd, ...) is appended
+    to it, so tests can assert on which CLI flags run_job() actually built.
+    """
     def _fake_popen(*args, **kwargs):
+        if capture is not None:
+            capture.append(args[0] if args else kwargs.get("args"))
         return FakeProc(output_lines, returncode=returncode)
     return _fake_popen
 

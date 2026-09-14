@@ -5,8 +5,8 @@ import { resources } from '@/lib/i18nResources'
 describe('i18n key parity (npm run i18n:check)', () => {
   const canonicalKeys = Object.keys(resources.zh).sort()
 
-  it('has the four languages the settings sheet offers', () => {
-    expect(LANGS.map((l) => l.code).sort()).toEqual(['en', 'ja', 'ko', 'zh'])
+  it('has the five languages the settings sheet offers', () => {
+    expect(LANGS.map((l) => l.code).sort()).toEqual(['de', 'en', 'ja', 'ko', 'zh'])
   })
 
   it('zh is non-empty (it is the canonical dictionary every other language is checked against)', () => {

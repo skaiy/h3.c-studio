@@ -11,6 +11,7 @@ export interface GenParams {
   first_frame: string | null
   last_frame: string | null
   ref_images: string[]
+  ref_audio: string[]
   token_reduction: boolean
   turbo: boolean
   checkpoint_after_step: number | null

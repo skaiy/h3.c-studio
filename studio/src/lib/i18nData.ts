@@ -1,13 +1,14 @@
 // Pure i18n data (no React) — kept out of i18n.tsx so that file can stay component/hook-only
 // (react-refresh/only-export-components requires .tsx files to only export components).
 
-export type Lang = 'zh' | 'en' | 'ja' | 'ko'
+export type Lang = 'zh' | 'en' | 'ja' | 'ko' | 'de'
 
 export const LANGS: { code: Lang; label: string }[] = [
   { code: 'zh', label: '中文' },
   { code: 'en', label: 'English' },
   { code: 'ja', label: '日本語' },
   { code: 'ko', label: '한국어' },
+  { code: 'de', label: 'Deutsch' },
 ]
 
 export const VALID_LANGS: Lang[] = LANGS.map((l) => l.code)
@@ -33,6 +34,9 @@ export const zh = {
   firstFrame: '首帧 FIRST FRAME',
   lastFrame: '尾帧 LAST FRAME',
   refImages: '参考图 REF IMAGES（与首尾帧互斥）',
+  refAudio: '参考音频 REF AUDIO（可选，用于音画同步）',
+  promptModeSimple: '简易',
+  promptModeStructured: '结构化',
   generate: '生成视频 →',
   preview: '预览 · PREVIEW',
   starting: '启动中',
