@@ -11,6 +11,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -453,6 +454,17 @@ def videos():
         items.append({"name": p.name, "size": p.stat().st_size,
                       "mtime": p.stat().st_mtime, "duration": dur})
     return items
+
+
+@app.get("/api/media/{name}")
+def media(name: str):
+    if "/" in name or ".." in name:
+        raise HTTPException(400, "invalid name")
+    for base in (UPLOADS, OUTPUTS):
+        p = base / name
+        if p.exists():
+            return FileResponse(p)
+    raise HTTPException(404)
 
 
 @app.delete("/api/videos/{name}")

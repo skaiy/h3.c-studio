@@ -44,7 +44,7 @@ function UploadSlot({ title, files, removeLabel, onAdd, onRemove, multiple }: Sl
       <div className="flex flex-wrap gap-1 px-2 pb-2">
         {files.map((f) => (
           <div key={f} className="relative group w-14 h-14 border border-border overflow-hidden">
-            <img src={`/uploads/${f}`} className="w-full h-full object-cover" />
+            <img src={`/api/media/${f}`} className="w-full h-full object-cover" />
             <button onClick={() => onRemove(f)}
               className="absolute inset-0 bg-black/70 text-white text-xs opacity-0 group-hover:opacity-100 transition-opacity">
               {removeLabel}
