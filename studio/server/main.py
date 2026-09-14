@@ -35,6 +35,11 @@ app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], all
 PROGRESS_RE = re.compile(r"(denoise(?: enqueue)?|video VAE load|FFmpeg|Qwen|video VAE|audio VAE|H3 DiT|load)\s+(\d+)\s*/\s*(\d+)")
 PHASE_RE = re.compile(r"h3 profile: (\S+(?: \S+)?)\s")
 
+# JOBS_FILE override exists so the test suite (studio/server/tests/) can point
+# a whole backend instance at an isolated tmp directory, same as BOARDS_FILE below.
+JOBS_FILE = Path(os.environ.get("H3_JOBS_FILE", ROOT / "jobs.json"))
+JOB_LOG_PERSIST_LIMIT = 200  # cap persisted log lines per job so jobs.json can't grow unbounded
+
 jobs: dict[str, dict] = {}
 queue: list[str] = []
 lock = threading.Lock()
@@ -60,6 +65,50 @@ class GenRequest(BaseModel):
     board_id: str | None = None      # when set, write status/output back to this board shot
     shot_id: str | None = None
     label: str | None = None
+
+
+def save_jobs():
+    """Persist `jobs` to JOBS_FILE so history survives a backend restart.
+
+    `request` is a GenRequest model (not natively JSON-serializable) and `proc`
+    is a live subprocess.Popen handle (never serializable, already stripped by
+    run_job once a job finishes) — both are handled explicitly here. Logs are
+    capped to the last JOB_LOG_PERSIST_LIMIT lines to keep the file bounded.
+    """
+    serializable = {}
+    for job_id, job in jobs.items():
+        entry = {k: v for k, v in job.items() if k not in ("request", "proc")}
+        entry["request"] = job["request"].model_dump()
+        entry["log"] = entry.get("log", [])[-JOB_LOG_PERSIST_LIMIT:]
+        serializable[job_id] = entry
+    JOBS_FILE.write_text(json.dumps(serializable, ensure_ascii=False, indent=1))
+
+
+def load_jobs():
+    """Restore `jobs` from JOBS_FILE at startup.
+
+    Any job still marked "queued" or "running" belonged to a subprocess that
+    no longer exists (the previous backend process is gone), so it is
+    reclassified as "interrupted" rather than left to look like it's still
+    in progress.
+    """
+    if not JOBS_FILE.exists():
+        return {}
+    try:
+        raw = json.loads(JOBS_FILE.read_text())
+    except Exception:                                              # noqa: BLE001
+        return {}
+    restored = {}
+    for job_id, entry in raw.items():
+        entry["request"] = GenRequest(**entry["request"])
+        if entry.get("status") in ("queued", "running"):
+            entry["status"] = "interrupted"
+            entry.setdefault("finished", time.time())
+        restored[job_id] = entry
+    return restored
+
+
+jobs = load_jobs()
 
 
 def resolve_file(name: str) -> Path:
@@ -101,6 +150,7 @@ def run_job(job_id: str):
         cmd += ["--resume", str(resolve_file(req.resume))]
 
     job.update(status="running", started=time.time(), cmd=cmd)
+    save_jobs()
     proc = subprocess.Popen(cmd, cwd=H3_DIR, stdout=subprocess.PIPE,
                             stderr=subprocess.STDOUT, text=True, bufsize=1)
     job["proc"] = proc
@@ -128,6 +178,7 @@ def run_job(job_id: str):
         job["log"].append(f"backend error: {e}")
     job["finished"] = time.time()
     job.pop("proc", None)
+    save_jobs()
     if req.board_id and req.shot_id and req.board_id in boards:
         b = boards[req.board_id]
         for s in b["shots"]:
@@ -228,6 +279,7 @@ def board_run_worker(board_id: str):
         jobs[job_id] = {"id": job_id, "request": req, "status": "queued",
                         "created": time.time(), "log": [], "phase": None,
                         "done": 0, "total": 0, "label": req.label}
+        save_jobs()
         shot.update(status="queued", job_id=job_id)
         save_boards()
         queue.append(job_id)
@@ -387,6 +439,7 @@ def generate(req: GenRequest):
     jobs[job_id] = {"id": job_id, "request": req, "status": "queued",
                     "created": time.time(), "log": [], "phase": None,
                     "done": 0, "total": 0, "label": req.label or req.prompt[:40]}
+    save_jobs()
     queue.append(job_id)
     launch_next()
     return {"job_id": job_id}
@@ -415,6 +468,7 @@ def cancel_job(job_id: str):
     if job["status"] == "queued" and job_id in queue:
         queue.remove(job_id)
     job["status"] = "cancelled"
+    save_jobs()
     return {"ok": True}
 
 

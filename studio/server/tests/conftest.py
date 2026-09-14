@@ -22,6 +22,7 @@ def app_env(tmp_path, monkeypatch):
     monkeypatch.setenv("H3_OUTPUTS_DIR", str(tmp_path / "outputs"))
     monkeypatch.setenv("H3_UPLOADS_DIR", str(tmp_path / "uploads"))
     monkeypatch.setenv("H3_BOARDS_FILE", str(tmp_path / "storyboards.json"))
+    monkeypatch.setenv("H3_JOBS_FILE", str(tmp_path / "jobs.json"))
 
     if "main" in sys.modules:
         module = importlib.reload(sys.modules["main"])
@@ -35,6 +36,15 @@ def client(app_env):
     from fastapi.testclient import TestClient
     with TestClient(app_env.app) as c:
         yield c
+
+
+def restart_backend():
+    """Re-import `main` against the *same* env vars (same tmp files) to
+    simulate a process restart: module-level state is rebuilt from scratch,
+    so anything not persisted to disk is lost, and load_jobs()/BOARDS_FILE
+    reload from whatever was last written."""
+    import sys
+    return importlib.reload(sys.modules["main"])
 
 
 class FakeProc:

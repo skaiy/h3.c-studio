@@ -41,5 +41,6 @@ studio/server/**/__pycache__/
 outputs
 MiniMax-H3
 studio/storyboards.json
+studio/jobs.json
 MiniMax-H3-turbo/
 *.h3ckpt
