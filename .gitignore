@@ -40,3 +40,4 @@ outputs
 MiniMax-H3
 studio/storyboards.json
 MiniMax-H3-turbo/
+*.h3ckpt

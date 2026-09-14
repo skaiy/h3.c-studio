@@ -51,6 +51,8 @@ class GenRequest(BaseModel):
     ref_images: list[str] = []
     token_reduction: bool = False
     turbo: bool = False              # use the folded Turbo-LoRA checkpoint (6-step distilled)
+    checkpoint_after_step: int | None = None   # pause after N steps, save ckpt + sigma-zero draft
+    resume: str | None = None        # checkpoint filename inside outputs/ to continue from
     label: str | None = None
 
 
@@ -84,6 +86,13 @@ def run_job(job_id: str):
         cmd += ["--ref-image", str(resolve_file(r))]
     if req.token_reduction:
         cmd.append("--token-reduction")
+    if req.checkpoint_after_step:
+        ckpt = f"studio-{job_id[:8]}.h3ckpt"
+        cmd += ["--checkpoint-after-step", str(req.checkpoint_after_step),
+                "--checkpoint", str(OUTPUTS / ckpt)]
+        job["checkpoint"] = ckpt
+    if req.resume:
+        cmd += ["--resume", str(resolve_file(req.resume))]
 
     job.update(status="running", started=time.time(), cmd=cmd)
     proc = subprocess.Popen(cmd, cwd=H3_DIR, stdout=subprocess.PIPE,
@@ -348,6 +357,7 @@ def public_job(j: dict) -> dict:
             "phase": j.get("phase"), "done": j.get("done"), "total": j.get("total"),
             "created": j["created"], "started": j.get("started"),
             "finished": j.get("finished"), "output": j.get("output"),
+            "checkpoint": j.get("checkpoint"),
             "params": req.model_dump(exclude={"prompt"})}
 
 

@@ -102,6 +102,8 @@ export default function Home() {
   const [current, setCurrent] = useState<string | null>(null)
   const [watchJob, setWatchJob] = useState(false)
   const [confirmDel, setConfirmDel] = useState<string | null>(null)
+  const [ckptSteps, setCkptSteps] = useState(0)
+  const [resumedFrom, setResumedFrom] = useState<string | null>(null)
   const [device, setDevice] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const logRef = useRef<HTMLDivElement>(null)
@@ -170,6 +172,8 @@ export default function Home() {
       ref_images: refImages,
       token_reduction: tokenReduction,
       turbo: preset.turbo ?? false,
+      checkpoint_after_step: ckptSteps > 0 ? ckptSteps : null,
+      resume: null,
       label: null,
     }
     try {
@@ -184,6 +188,32 @@ export default function Home() {
     const r = await api.extractLastFrame(v.name)
     setFirstFrame([r.name])
     setRefImages([])
+  }
+
+  const resumeFrom = async (job: Job) => {
+    if (!job.checkpoint) return
+    const p = job.params as Record<string, unknown>
+    await api.generate({
+      prompt, // 当前编辑框里的 prompt（与草稿相同才可续）
+      width: (p.width as number) ?? 512,
+      height: (p.height as number) ?? 512,
+      seconds: (p.seconds as number) ?? 6,
+      frames: null,
+      steps: (p.steps as number) ?? 20,
+      layers: (p.layers as number) ?? 45,
+      reuse: (p.reuse as number) ?? 2,
+      seed: (p.seed as number) ?? 42,
+      first_frame: (p.first_frame as string) ?? null,
+      last_frame: (p.last_frame as string) ?? null,
+      ref_images: [],
+      token_reduction: false,
+      turbo: (p.turbo as boolean) ?? false,
+      checkpoint_after_step: null,
+      resume: job.checkpoint,
+      label: `▶ 续跑 ${job.label}`,
+    })
+    setResumedFrom(job.checkpoint)
+    await refresh()
   }
 
   const playVideo = (name: string) => {
@@ -203,6 +233,7 @@ export default function Home() {
     await refresh()
   }
 
+  const draftJob = jobs.find((j) => j.status === 'done' && j.checkpoint && j.checkpoint !== resumedFrom)
   const pct = runningJob && runningJob.total ? Math.round((runningJob.done / runningJob.total) * 100) : 0
   const showJob = watchJob && runningJob
 
@@ -276,6 +307,18 @@ export default function Home() {
           </div>
 
           <div className="flex items-center justify-between px-2 py-1">
+            <div className="bar">{t('ckptAfter')}</div>
+            <input
+              type="number"
+              value={ckptSteps}
+              min={0}
+              max={PRESETS[presetIdx].steps}
+              onChange={(e) => setCkptSteps(Math.max(0, parseInt(e.target.value) || 0))}
+              className="w-16 h-7 bg-black/30 border border-border px-2 text-[12px] mono outline-none"
+            />
+          </div>
+
+          <div className="flex items-center justify-between px-2 py-1">
             <div className="bar">SEED</div>
             <div className="flex items-center gap-1">
               <input
@@ -333,6 +376,15 @@ export default function Home() {
               </button>
             )}
           </div>
+          {draftJob && !showJob && (
+            <div className="flex items-center gap-2 px-2 h-8 border-b border-border shrink-0">
+              <span className="bar !text-white">{t('draftReady')}</span>
+              <span className="mono text-[10px] text-muted-foreground truncate">{draftJob.label}</span>
+              <div className="flex-1" />
+              <button onClick={() => resumeFrom(draftJob)}
+                className="bar linkfade !text-white underline">{t('resumeRun')}</button>
+            </div>
+          )}
           <div className="flex-1 min-h-0 flex items-center justify-center bg-black/40 p-4">
             {showJob ? (
               <div className="w-full max-w-xl">

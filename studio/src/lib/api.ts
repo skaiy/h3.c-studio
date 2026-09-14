@@ -13,6 +13,8 @@ export interface GenParams {
   ref_images: string[]
   token_reduction: boolean
   turbo: boolean
+  checkpoint_after_step: number | null
+  resume: string | null
   label: string | null
 }
 
@@ -27,6 +29,7 @@ export interface Job {
   started?: number
   finished?: number
   output?: string
+  checkpoint?: string
   params: Record<string, unknown>
   log?: string[]
 }
