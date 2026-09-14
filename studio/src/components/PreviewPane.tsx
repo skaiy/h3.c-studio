@@ -4,15 +4,21 @@ import { useI18n } from '@/lib/i18n'
 import { Progress } from '@/components/ui/progress'
 
 interface Props {
-  video: string | null          // 当前应播放的成片（选中镜头或板 result）
+  video: string | null          // 当前应播放的成片（选中镜头 / 板 result / 连续预览当前帧）
   runningJob: Job | null
   watchJob: boolean
   onWatchJob: (v: boolean) => void
   draftJob: Job | null
   onResume: (job: Job) => void
+  hasShots: boolean
+  onAddShot: () => void
+  sequencing: boolean
+  onSequenceEnded: () => void
 }
 
-export default function PreviewPane({ video, runningJob, watchJob, onWatchJob, draftJob, onResume }: Props) {
+export default function PreviewPane({
+  video, runningJob, watchJob, onWatchJob, draftJob, onResume, hasShots, onAddShot, sequencing, onSequenceEnded,
+}: Props) {
   const { t } = useI18n()
   const logRef = useRef<HTMLDivElement>(null)
   const pct = runningJob && runningJob.total ? Math.round((runningJob.done / runningJob.total) * 100) : 0
@@ -59,10 +65,19 @@ export default function PreviewPane({ video, runningJob, watchJob, onWatchJob, d
             </div>
           </div>
         ) : video ? (
-          <video key={video} src={`/outputs/${video}`} controls autoPlay loop className="max-w-full max-h-full" />
+          <video key={video} src={`/outputs/${video}`} controls autoPlay loop={!sequencing}
+            onEnded={sequencing ? onSequenceEnded : undefined} className="max-w-full max-h-full" />
+        ) : !hasShots ? (
+          <div className="flex flex-col items-center gap-3">
+            <div className="text-muted-foreground text-[12px] uppercase tracking-[0.2em]">{t('selectShotHint')}</div>
+            <button onClick={onAddShot}
+              className="h-9 px-4 border border-dashed border-muted-foreground/50 text-muted-foreground text-[11px] hover:text-white hover:border-white transition-colors">
+              {t('addShot2')}
+            </button>
+          </div>
         ) : (
           <div className="text-muted-foreground text-[12px] uppercase tracking-[0.2em]">
-            {t('selectShotHint')}
+            {t('emptyPreview')}
           </div>
         )}
       </div>

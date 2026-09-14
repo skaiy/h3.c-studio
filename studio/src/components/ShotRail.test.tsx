@@ -16,12 +16,13 @@ function board(shots: Shot[]): Board {
   return { id: 'b1', name: 'test', chain: true, shots, status: 'idle', result: null, createdAt: 0, modifiedAt: 0 }
 }
 
-function setup(shots = [shot('a'), shot('b'), shot('c')]) {
+function setup(shots = [shot('a'), shot('b'), shot('c')], overrides: { sequencing?: boolean } = {}) {
   const props = {
     board: board(shots), selected: 0,
     onSelect: vi.fn(), onAddShot: vi.fn(), onInsertShot: vi.fn(),
     onDuplicateShot: vi.fn(), onDeleteShot: vi.fn(), onReorder: vi.fn(),
     onRunAll: vi.fn(), onConcat: vi.fn(),
+    sequencing: overrides.sequencing ?? false, onToggleSequence: vi.fn(),
   }
   render(<ShotRail {...props} />)
   return props
@@ -80,5 +81,24 @@ describe('ShotRail', () => {
   it('disables concat until at least two shots are done', () => {
     setup([shot('a', { status: 'done' }), shot('b'), shot('c')])
     expect(screen.getByText(/拼接导出/).closest('button')).toBeDisabled()
+  })
+
+  it('disables sequence preview when no shot is done yet', () => {
+    setup([shot('a'), shot('b')])
+    expect(screen.getByText(/连续预览/).closest('button')).toBeDisabled()
+  })
+
+  it('enables sequence preview once at least one shot is done, and toggles it', async () => {
+    const user = userEvent.setup()
+    const props = setup([shot('a', { status: 'done', output: 'a.mp4' }), shot('b')])
+    const btn = screen.getByText(/连续预览/).closest('button')!
+    expect(btn).toBeEnabled()
+    await user.click(btn)
+    expect(props.onToggleSequence).toHaveBeenCalled()
+  })
+
+  it('shows a stop label while sequencing', () => {
+    setup([shot('a', { status: 'done', output: 'a.mp4' })], { sequencing: true })
+    expect(screen.getByText(/停止预览/)).toBeInTheDocument()
   })
 })

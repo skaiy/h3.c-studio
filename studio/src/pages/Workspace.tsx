@@ -33,6 +33,7 @@ export default function Workspace() {
   const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved')
   const [device, setDevice] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
+  const [sequenceIdx, setSequenceIdx] = useState<number | null>(null)
   const dirtyUntil = useRef(0)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -68,6 +69,8 @@ export default function Workspace() {
     const t = setInterval(() => refreshBoard(boardId), 2500)
     return () => clearInterval(t)
   }, [boardId, refreshBoard])
+
+  useEffect(() => setSequenceIdx(null), [boardId])
 
   const refreshJobs = useCallback(async () => {
     try {
@@ -202,6 +205,11 @@ export default function Workspace() {
     setSelected(to)
   }
 
+  const addShot = () => {
+    patchBoard((b) => ({ ...b, shots: [...b.shots, newShot()] }))
+    setSelected(board?.shots.length ?? 0)
+  }
+
   const runAll = async () => {
     const saved = await flushSave()
     if (!saved) return
@@ -244,7 +252,22 @@ export default function Workspace() {
   }
 
   const draftJob = jobs.find((j) => j.status === 'done' && j.checkpoint && j.checkpoint !== resumedFrom) ?? null
-  const currentVideo = board?.result ?? shot?.output ?? null
+  const doneOutputs = board?.shots.filter((s) => s.output).map((s) => s.output!) ?? []
+  const sequencing = sequenceIdx !== null
+  const currentVideo = sequencing ? (doneOutputs[sequenceIdx!] ?? null) : (board?.result ?? shot?.output ?? null)
+
+  const toggleSequence = () => {
+    if (sequencing) { setSequenceIdx(null); return }
+    if (doneOutputs.length === 0) return
+    setSequenceIdx(0)
+  }
+  const advanceSequence = () => {
+    setSequenceIdx((i) => {
+      if (i === null) return null
+      const next = i + 1
+      return next < doneOutputs.length ? next : null
+    })
+  }
 
   if (!board) {
     return (
@@ -280,17 +303,16 @@ export default function Workspace() {
         <ShotRail
           board={board}
           selected={selected}
-          onSelect={setSelected}
-          onAddShot={() => {
-            patchBoard((b) => ({ ...b, shots: [...b.shots, newShot()] }))
-            setSelected(board.shots.length)
-          }}
+          onSelect={(i) => { setSequenceIdx(null); setSelected(i) }}
+          onAddShot={addShot}
           onInsertShot={insertShot}
           onDuplicateShot={duplicateShot}
           onDeleteShot={deleteShot}
           onReorder={reorderShots}
           onRunAll={runAll}
           onConcat={concat}
+          sequencing={sequencing}
+          onToggleSequence={toggleSequence}
         />
         <PreviewPane
           video={currentVideo}
@@ -299,6 +321,10 @@ export default function Workspace() {
           onWatchJob={setWatchJob}
           draftJob={draftJob}
           onResume={resumeDraft}
+          hasShots={board.shots.length > 0}
+          onAddShot={addShot}
+          sequencing={sequencing}
+          onSequenceEnded={advanceSequence}
         />
         {shot && (
           <ShotInspector

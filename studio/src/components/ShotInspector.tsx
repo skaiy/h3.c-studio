@@ -164,7 +164,7 @@ export default function ShotInspector({ shot, chain, isFirst, onChange, onGenera
       <div className="p-2 mt-auto">
         <Button onClick={onGenerate} disabled={generating || busy || !shot.prompt.trim()}
           className="w-full h-10 rounded-none bg-white text-black hover:bg-white/85 text-[12px] font-semibold uppercase tracking-[0.2em]">
-          {busy ? t('running') : t('generateShot')}
+          {busy ? t('running') : shot.output ? t('regenerateShot') : t('generateShot')}
         </Button>
       </div>
     </div>

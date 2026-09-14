@@ -23,9 +23,11 @@ interface Props {
   onReorder: (from: number, to: number) => void
   onRunAll: () => void
   onConcat: () => void
+  sequencing: boolean
+  onToggleSequence: () => void
 }
 
-export default function ShotRail({ board, selected, onSelect, onAddShot, onInsertShot, onDuplicateShot, onDeleteShot, onReorder, onRunAll, onConcat }: Props) {
+export default function ShotRail({ board, selected, onSelect, onAddShot, onInsertShot, onDuplicateShot, onDeleteShot, onReorder, onRunAll, onConcat, sequencing, onToggleSequence }: Props) {
   const { t } = useI18n()
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [dropAt, setDropAt] = useState<number | null>(null)
@@ -73,6 +75,10 @@ export default function ShotRail({ board, selected, onSelect, onAddShot, onInser
         <button onClick={onRunAll} disabled={board.status === 'running'}
           className="h-8 text-[11px] uppercase tracking-[0.12em] hover:bg-white hover:text-black transition-colors disabled:opacity-40">
           ▶ {t('runAll')}
+        </button>
+        <button onClick={onToggleSequence} disabled={!sequencing && doneCount < 1}
+          className="h-8 text-[11px] uppercase tracking-[0.12em] border-t border-border hover:bg-white hover:text-black transition-colors disabled:opacity-40">
+          {sequencing ? `■ ${t('stopSequence')}` : `▶ ${t('sequencePreview')}`}
         </button>
         <button onClick={onConcat} disabled={doneCount < 2 || board.status === 'running'}
           className="h-8 text-[11px] uppercase tracking-[0.12em] border-t border-border hover:bg-white hover:text-black transition-colors disabled:opacity-40">
