@@ -40,7 +40,7 @@
 
 ### 社区互鉴
 
-同为 h3.c 图形界面的 [Henninges/h3-studio](https://github.com/Henninges/h3-studio)（专精音乐视频/唇形同步工作流）启发了本项目两个功能：结构化提示词的空字段智能默认值、以及参考音频条件输入（`--ref-audio`）。开源生态互相学习，感谢 Henninges 的分享。
+同为 h3.c 图形界面的 [Henninges/h3-studio](https://github.com/Henninges/h3-studio)（专精音乐视频/唇形同步工作流）启发了本项目两个功能：结构化提示词的空字段智能默认值、以及参考音频条件输入（`--ref-audio`）。开源生态互相学习，感谢 Henninges 对本项目的关注、指正与热情交流；界面新增德语，也是对这份交流的一点致敬。
 
 ### 深度阅读
 
@@ -80,7 +80,7 @@ H3_STUDIO_TOKEN=your-secret-token npm run dev
 | 2026-09-14 | v0.2 统一工作台：五区信息架构、分镜板 CRUD + 拖拽排序、设置面板 + 中/英/日/韩四语言、连续预览、空状态引导 |
 | 2026-09-14 | Turbo 6 步预设、断点续跑界面化、发布 h3.c 与其他推理栈对比分析文档、README 补充演示视频与截图 |
 | 2026-09-14 | 后端加固：pytest 单测套件（#1）、任务持久化重启不丢失（#3）、可选 Bearer token 鉴权（#2） |
-| 2026-09-14 | 吸收 [Henninges/h3-studio](https://github.com/Henninges/h3-studio) 优点：参考音频条件输入、结构化 Context-IR 提示词字段（空字段智能默认值）、新增德语，界面增至五语言 |
+| 2026-09-14 | 吸收 [Henninges/h3-studio](https://github.com/Henninges/h3-studio) 优点：参考音频条件输入、结构化 Context-IR 提示词字段（空字段智能默认值），感谢 Henninges 的分享与热情交流；新增德语作为对他关注本项目的致敬，界面增至五语言 |
 
 ### 协议
 
@@ -124,7 +124,7 @@ This repository forks h3.c and adds a `studio/` web workbench: a prompt studio, 
 
 ### Cross-pollination
 
-[Henninges/h3-studio](https://github.com/Henninges/h3-studio) — another web GUI for h3.c, specialized for the music-video / lip-sync workflow — inspired two features here: smart defaults for empty structured-prompt fields, and reference-audio conditioning (`--ref-audio`). Thanks to Henninges for sharing; open-source GUIs for the same engine learning from each other is exactly how this should go.
+[Henninges/h3-studio](https://github.com/Henninges/h3-studio) — another web GUI for h3.c, specialized for the music-video / lip-sync workflow — inspired two features here: smart defaults for empty structured-prompt fields, and reference-audio conditioning (`--ref-audio`). Thanks to Henninges for the attention, the correction, and the friendly exchange; open-source GUIs for the same engine learning from each other is exactly how this should go. Adding German to the UI is a small tribute to that exchange.
 
 ### Further reading
 
@@ -164,7 +164,7 @@ H3_STUDIO_TOKEN=your-secret-token npm run dev
 | 2026-09-14 | v0.2 unified workspace: five-zone IA, board switcher CRUD + drag-reorder, settings panel + 4-language i18n (zh/en/ja/ko), sequence preview, guided empty states |
 | 2026-09-14 | Turbo 6-step preset, resumable checkpoints in the UI, published the "h3.c vs other stacks" comparison doc, added demo video + screenshots to README |
 | 2026-09-14 | Backend hardening: pytest test suite (#1), job persistence across restarts (#3), optional Bearer-token auth (#2) |
-| 2026-09-14 | Absorbed ideas from [Henninges/h3-studio](https://github.com/Henninges/h3-studio): reference-audio conditioning, structured Context-IR prompt fields with smart defaults, added German — 5 languages total |
+| 2026-09-14 | Absorbed ideas from [Henninges/h3-studio](https://github.com/Henninges/h3-studio): reference-audio conditioning, structured Context-IR prompt fields with smart defaults — thanks to Henninges for sharing and the friendly exchange; added German as a tribute to his attention to this project, 5 languages total |
 
 ### Licensing
 
