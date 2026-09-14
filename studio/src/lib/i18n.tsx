@@ -1,165 +1,29 @@
 import { createContext, useContext, useState, type ReactNode } from 'react'
+import { VALID_LANGS, type I18nKey, type Lang } from '@/lib/i18nData'
+import { translate } from '@/lib/i18nResources'
 
-export type Lang = 'zh' | 'en'
-
-const dict = {
-  zh: {
-    title: 'H3 STUDIO',
-    subtitle: 'MINIMAX-H3 · NATIVE METAL',
-    activeJobs: '个任务活动',
-    prompt: '提示词 · PROMPT',
-    promptHint: 'Scene / Action / Camera / Look / Audio 五段式效果最佳',
-    canvas: '画幅 · CANVAS',
-    duration: '时长',
-    preset: '速度 / 画质预设',
-    presetBalanced: '平衡 · 推荐',
-    presetDraft: '激进草稿',
-    presetTurbo: 'Turbo 6 步 ⚡',
-    presetHQ: '高画质',
-    presetRef: '参考级 · 慢',
-    random: '随机',
-    tokenReduction: 'TOKEN 削减 · 激进',
-    conditioning: '条件输入 · CONDITIONING',
-    firstFrame: '首帧 FIRST FRAME',
-    lastFrame: '尾帧 LAST FRAME',
-    refImages: '参考图 REF IMAGES（与首尾帧互斥）',
-    generate: '生成视频 →',
-    preview: '预览 · PREVIEW',
-    starting: '启动中',
-    cancel: '取消',
-    emptyPreview: '配置参数 → 生成视频',
-    library: '作品库 · LIBRARY',
-    items: '条',
-    emptyLibrary: '暂无作品',
-    play: '播放',
-    chain: '末帧接力',
-    remove: '移除',
-    delete: '删除',
-    confirmDelete: '确认删除?',
-    ckptAfter: '断点暂停 · 第 N 步出草稿（0=关）',
-    draftReady: '草稿已完成，满意可续跑完整版',
-    resumeRun: '▶ 续跑完成',
-    draftBadge: '草稿',
-    addShot2: '+ 添加',
-    generateShot: '生成此镜 →',
-    runAll: '运行全部',
-    newBoard: '+ 新建分镜',
-    saved: '已保存',
-    saving: '保存中…',
-    selectShotHint: '选择或添加一个镜头开始',
-    boardResult2: '成片',
-    queued: '排队中',
-    langToggle: 'EN',
-    studio: '工作室',
-    board: '分镜板',
-    boardName: '分镜名称',
-    addShot: '+ 添加镜头',
-    shot: '镜头',
-    runBoard: '▶ 运行全部镜头',
-    running: '运行中…',
-    concat: '⇢ 拼接导出',
-    chainAuto: '自动末帧接力',
-    boardResult: '拼接成片',
-    needTwo: '至少 2 个完成镜头',
-    deleteBoard: '删除分镜',
-    saveBoard: '保存',
-    renameBoard: '重命名',
-    duplicateBoard: '复制分镜',
-    idle: '待生成',
-    skipped: '跳过',
-    done: '完成',
-    error: '失败',
-  },
-  en: {
-    title: 'H3 STUDIO',
-    subtitle: 'MINIMAX-H3 · NATIVE METAL',
-    activeJobs: 'active jobs',
-    prompt: 'PROMPT',
-    promptHint: 'Scene / Action / Camera / Look / Audio structure works best',
-    canvas: 'CANVAS',
-    duration: 'DURATION',
-    preset: 'SPEED / QUALITY PRESET',
-    presetBalanced: 'Balanced',
-    presetDraft: 'Draft',
-    presetTurbo: 'Turbo 6-step ⚡',
-    presetHQ: 'Quality',
-    presetRef: 'Reference',
-    random: 'Rand',
-    tokenReduction: 'TOKEN REDUCTION · AGGRESSIVE',
-    conditioning: 'CONDITIONING',
-    firstFrame: 'FIRST FRAME',
-    lastFrame: 'LAST FRAME',
-    refImages: 'REF IMAGES (exclusive w/ anchors)',
-    generate: 'GENERATE →',
-    preview: 'PREVIEW',
-    starting: 'starting',
-    cancel: 'cancel',
-    emptyPreview: 'Configure → Generate',
-    library: 'LIBRARY',
-    items: 'clips',
-    emptyLibrary: 'No clips yet',
-    play: 'Play',
-    chain: 'Chain last frame',
-    remove: 'Remove',
-    delete: 'Delete',
-    confirmDelete: 'Confirm?',
-    ckptAfter: 'Checkpoint draft after N steps (0=off)',
-    draftReady: 'Draft ready — resume to finish the full render',
-    resumeRun: '▶ Resume',
-    draftBadge: 'draft',
-    addShot2: '+ Add',
-    generateShot: 'Generate shot →',
-    runAll: 'Run all',
-    newBoard: '+ New board',
-    saved: 'Saved',
-    saving: 'Saving…',
-    selectShotHint: 'Select or add a shot to begin',
-    boardResult2: 'Result',
-    queued: 'queued',
-    langToggle: '中',
-    studio: 'STUDIO',
-    board: 'STORYBOARD',
-    boardName: 'Board name',
-    addShot: '+ Add shot',
-    shot: 'Shot',
-    runBoard: '▶ Run all shots',
-    running: 'Running…',
-    concat: '⇢ Concat & export',
-    chainAuto: 'Auto chain last frame',
-    boardResult: 'Board result',
-    needTwo: 'Need 2+ finished shots',
-    deleteBoard: 'Delete board',
-    saveBoard: 'Save',
-    renameBoard: 'Rename',
-    duplicateBoard: 'Duplicate board',
-    idle: 'idle',
-    skipped: 'skipped',
-    done: 'done',
-    error: 'error',
-  },
-} as const
-
-export type I18nKey = keyof (typeof dict)['zh']
+export type { Lang, I18nKey }
 
 interface I18nCtx {
   lang: Lang
   t: (k: I18nKey) => string
-  toggle: () => void
+  setLang: (l: Lang) => void
 }
 
-const Ctx = createContext<I18nCtx>({ lang: 'zh', t: (k) => dict.zh[k], toggle: () => {} })
+const Ctx = createContext<I18nCtx>({ lang: 'zh', t: (k) => translate('zh', k), setLang: () => {} })
+
+const STORAGE_KEY = 'h3-studio-lang'
 
 export function I18nProvider({ children }: { children: ReactNode }) {
-  const [lang, setLang] = useState<Lang>(() =>
-    (localStorage.getItem('h3-studio-lang') as Lang) || 'zh'
-  )
-  const toggle = () =>
-    setLang((l) => {
-      const next = l === 'zh' ? 'en' : 'zh'
-      localStorage.setItem('h3-studio-lang', next)
-      return next
-    })
-  return <Ctx.Provider value={{ lang, t: (k) => dict[lang][k], toggle }}>{children}</Ctx.Provider>
+  const [lang, setLangState] = useState<Lang>(() => {
+    const stored = localStorage.getItem(STORAGE_KEY) as Lang | null
+    return stored && VALID_LANGS.includes(stored) ? stored : 'zh'
+  })
+  const setLang = (l: Lang) => {
+    setLangState(l)
+    localStorage.setItem(STORAGE_KEY, l)
+  }
+  return <Ctx.Provider value={{ lang, t: (k) => translate(lang, k), setLang }}>{children}</Ctx.Provider>
 }
 
 export const useI18n = () => useContext(Ctx)

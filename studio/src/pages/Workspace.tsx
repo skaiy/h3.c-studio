@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
+import { Settings } from 'lucide-react'
 import { api, type Board, type BoardSummary, type GenParams, type Job, type Shot, type VideoItem } from '@/lib/api'
 import { useI18n } from '@/lib/i18n'
 import { insertShotAt, duplicateShotAt, removeShotAt, moveShot, nextSelectedAfterDelete } from '@/lib/shotOps'
@@ -8,6 +9,7 @@ import ShotRail from '@/components/ShotRail'
 import ShotInspector from '@/components/ShotInspector'
 import PreviewPane from '@/components/PreviewPane'
 import LibraryStrip from '@/components/LibraryStrip'
+import SettingsSheet from '@/components/SettingsSheet'
 
 function newShot(): Shot {
   return {
@@ -18,7 +20,7 @@ function newShot(): Shot {
 }
 
 export default function Workspace() {
-  const { t, toggle } = useI18n()
+  const { t } = useI18n()
   const nav = useNavigate()
   const { boardId } = useParams()
   const [boards, setBoards] = useState<BoardSummary[]>([])
@@ -30,6 +32,7 @@ export default function Workspace() {
   const [resumedFrom, setResumedFrom] = useState<string | null>(null)
   const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved')
   const [device, setDevice] = useState('')
+  const [settingsOpen, setSettingsOpen] = useState(false)
   const dirtyUntil = useRef(0)
   const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
@@ -266,10 +269,12 @@ export default function Workspace() {
         <div className="flex-1" />
         <div className="bar mono normal-case tracking-normal">{device || '…'}</div>
         <div className="bar">{jobs.filter((j) => j.status === 'queued' || j.status === 'running').length} {t('activeJobs')}</div>
-        <button onClick={toggle} className="bar linkfade border-l border-border !text-white">
-          {t('langToggle')}
+        <button onClick={() => setSettingsOpen(true)} aria-label={t('settingsTitle')} title={t('settingsTitle')}
+          className="bar linkfade border-l border-border !text-white">
+          <Settings className="size-4" />
         </button>
       </div>
+      <SettingsSheet open={settingsOpen} onOpenChange={setSettingsOpen} />
 
       <div className="flex flex-1 min-h-0">
         <ShotRail

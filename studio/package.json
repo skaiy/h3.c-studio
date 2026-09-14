@@ -8,7 +8,8 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "vitest run"
+    "test": "vitest run",
+    "i18n:check": "vitest run src/lib/i18n.check.test.ts"
   },
   "dependencies": {
     "@hookform/resolvers": "^5.2.2",
