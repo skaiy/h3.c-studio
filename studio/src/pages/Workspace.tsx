@@ -172,6 +172,41 @@ export default function Workspace() {
     await refreshJobs()
   }
 
+  const insertShot = (at: number) => {
+    patchBoard((b) => {
+      const shots = [...b.shots]
+      shots.splice(at, 0, newShot())
+      return { ...b, shots }
+    })
+    setSelected(at)
+  }
+
+  const duplicateShot = (i: number) => {
+    patchBoard((b) => {
+      const src = b.shots[i]
+      const copy = { ...src, id: `s${Date.now().toString(36)}`, status: 'idle', output: null, job_id: null }
+      const shots = [...b.shots]
+      shots.splice(i + 1, 0, copy)
+      return { ...b, shots }
+    })
+    setSelected(i + 1)
+  }
+
+  const deleteShot = (i: number) => {
+    patchBoard((b) => ({ ...b, shots: b.shots.filter((_, xi) => xi !== i) }))
+    setSelected((sel) => Math.max(0, sel > i ? sel - 1 : Math.min(sel, board!.shots.length - 2)))
+  }
+
+  const reorderShots = (from: number, to: number) => {
+    patchBoard((b) => {
+      const shots = [...b.shots]
+      const [moved] = shots.splice(from, 1)
+      shots.splice(to, 0, moved)
+      return { ...b, shots }
+    })
+    setSelected(to)
+  }
+
   const runAll = async () => {
     const saved = await flushSave()
     if (!saved) return
@@ -253,6 +288,10 @@ export default function Workspace() {
             patchBoard((b) => ({ ...b, shots: [...b.shots, newShot()] }))
             setSelected(board.shots.length)
           }}
+          onInsertShot={insertShot}
+          onDuplicateShot={duplicateShot}
+          onDeleteShot={deleteShot}
+          onReorder={reorderShots}
           onRunAll={runAll}
           onConcat={concat}
         />

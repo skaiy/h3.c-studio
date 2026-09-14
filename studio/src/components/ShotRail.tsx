@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import { type Board, type Shot } from '@/lib/api'
 import { useI18n } from '@/lib/i18n'
 
@@ -16,23 +17,54 @@ interface Props {
   selected: number
   onSelect: (i: number) => void
   onAddShot: () => void
+  onInsertShot: (at: number) => void
+  onDuplicateShot: (i: number) => void
+  onDeleteShot: (i: number) => void
+  onReorder: (from: number, to: number) => void
   onRunAll: () => void
   onConcat: () => void
 }
 
-export default function ShotRail({ board, selected, onSelect, onAddShot, onRunAll, onConcat }: Props) {
+export default function ShotRail({ board, selected, onSelect, onAddShot, onInsertShot, onDuplicateShot, onDeleteShot, onReorder, onRunAll, onConcat }: Props) {
   const { t } = useI18n()
+  const [dragIdx, setDragIdx] = useState<number | null>(null)
+  const [dropAt, setDropAt] = useState<number | null>(null)
   const doneCount = board.shots.filter((s) => s.status === 'done').length
+
   return (
     <div className="w-[104px] shrink-0 border-r border-border flex flex-col min-h-0">
       <div className="bar">{t('shot')} {board.shots.length}</div>
-      <div className="flex-1 overflow-y-auto p-1 flex flex-col gap-1">
+      <div className="flex-1 overflow-y-auto p-1 flex flex-col">
         {board.shots.map((s, i) => (
-          <ShotCard key={s.id} shot={s} index={i} active={i === selected} onClick={() => onSelect(i)} />
+          <div key={s.id}>
+            <InsertLine active={dropAt === i} onClick={() => onInsertShot(i)}
+              onDragOver={(e) => { e.preventDefault(); setDropAt(i) }} />
+            <ShotCard
+              shot={s}
+              index={i}
+              active={i === selected}
+              dragging={dragIdx === i}
+              onClick={() => onSelect(i)}
+              onDragStart={() => setDragIdx(i)}
+              onDragEnd={() => { setDragIdx(null); setDropAt(null) }}
+              onDragOverCard={(e) => { e.preventDefault(); setDropAt(i) }}
+              onDrop={() => {
+                if (dragIdx !== null && dragIdx !== i) onReorder(dragIdx, i)
+                setDragIdx(null); setDropAt(null)
+              }}
+              onDuplicate={() => onDuplicateShot(i)}
+              onDelete={() => onDeleteShot(i)}
+              deleteLabel={t('delete')}
+              confirmLabel={t('confirmDelete')}
+              duplicateTitle="⧉"
+            />
+          </div>
         ))}
+        <InsertLine active={dropAt === board.shots.length} onClick={() => onInsertShot(board.shots.length)}
+          onDragOver={(e) => { e.preventDefault(); setDropAt(board.shots.length) }} />
         <button
           onClick={onAddShot}
-          className="h-12 border border-dashed border-muted-foreground/50 text-muted-foreground hover:text-white hover:border-white text-[11px] transition-colors"
+          className="h-12 shrink-0 border border-dashed border-muted-foreground/50 text-muted-foreground hover:text-white hover:border-white text-[11px] transition-colors"
         >
           {t('addShot2')}
         </button>
@@ -51,11 +83,43 @@ export default function ShotRail({ board, selected, onSelect, onAddShot, onRunAl
   )
 }
 
-function ShotCard({ shot, index, active, onClick }: { shot: Shot; index: number; active: boolean; onClick: () => void }) {
+function InsertLine({ active, onClick, onDragOver }: { active: boolean; onClick: () => void; onDragOver: (e: React.DragEvent) => void }) {
   return (
-    <button
+    <div onClick={onClick} onDragOver={onDragOver}
+      className={`group/ins h-2 flex items-center justify-center cursor-pointer transition-colors ${active ? 'bg-white/30' : 'hover:bg-white/10'}`}>
+      <span className="text-[9px] text-transparent group-hover/ins:text-white leading-none">+</span>
+    </div>
+  )
+}
+
+interface CardProps {
+  shot: Shot
+  index: number
+  active: boolean
+  dragging: boolean
+  onClick: () => void
+  onDragStart: () => void
+  onDragEnd: () => void
+  onDragOverCard: (e: React.DragEvent) => void
+  onDrop: () => void
+  onDuplicate: () => void
+  onDelete: () => void
+  deleteLabel: string
+  confirmLabel: string
+  duplicateTitle: string
+}
+
+function ShotCard({ shot, index, active, dragging, onClick, onDragStart, onDragEnd, onDragOverCard, onDrop, onDuplicate, onDelete, deleteLabel, confirmLabel, duplicateTitle }: CardProps) {
+  const [confirming, setConfirming] = useState(false)
+  return (
+    <div
+      draggable
+      onDragStart={onDragStart}
+      onDragEnd={onDragEnd}
+      onDragOver={onDragOverCard}
+      onDrop={(e) => { e.preventDefault(); onDrop() }}
+      className={`group relative w-full text-left border transition-colors cursor-pointer ${active ? 'border-white' : 'border-border hover:border-muted-foreground'} ${dragging ? 'opacity-40' : ''}`}
       onClick={onClick}
-      className={`relative w-full text-left border transition-colors ${active ? 'border-white' : 'border-border hover:border-muted-foreground'}`}
     >
       {shot.output ? (
         <video src={`/outputs/${shot.output}`} preload="metadata" muted className="w-full h-14 object-cover pointer-events-none" />
@@ -68,6 +132,24 @@ function ShotCard({ shot, index, active, onClick }: { shot: Shot; index: number;
         <span className={`w-1.5 h-1.5 rounded-full ${STATUS_DOT[shot.status] ?? STATUS_DOT.idle}`} />
         <span className="mono text-[9px] text-white/80 [text-shadow:0_0_2px_black]">{index + 1}</span>
       </div>
-    </button>
+      <div className="absolute top-0.5 left-1/2 -translate-x-1/2 text-[8px] text-white/40 opacity-0 group-hover:opacity-100 select-none">⋮⋮</div>
+      <div className="absolute top-0.5 right-0.5 hidden group-hover:flex gap-0.5">
+        <button title={duplicateTitle}
+          onClick={(e) => { e.stopPropagation(); onDuplicate() }}
+          className="w-5 h-5 text-[10px] bg-black/70 text-white border border-border hover:border-white">⧉</button>
+        <button
+          title={deleteLabel}
+          onClick={(e) => {
+            e.stopPropagation()
+            if (!confirming) {
+              setConfirming(true)
+              setTimeout(() => setConfirming(false), 3000)
+            } else onDelete()
+          }}
+          className={`h-5 text-[9px] ${confirming ? 'bg-black text-white border border-white px-0.5' : 'w-5 bg-black/70 text-white border border-border hover:border-white'}`}>
+          {confirming ? confirmLabel : '✕'}
+        </button>
+      </div>
+    </div>
   )
 }
