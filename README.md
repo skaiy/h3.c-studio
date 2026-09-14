@@ -63,7 +63,7 @@ npm run dev        # 自动拉起 FastAPI 后端(:8765) + Vite 前端
 ### 协议
 
 - 引擎（根目录）：MIT © antirez（见 [LICENSE](LICENSE)）
-- Studio（`studio/`）：Apache-2.0 © diaoguoliang（见 [studio/LICENSE](studio/LICENSE)）
+- Studio（`studio/`）：Apache-2.0 © skaiy（见 [studio/LICENSE](studio/LICENSE)）
 - 模型权重不包含在本仓库中，受 MiniMax H3 Community License 约束（含地域限制），下载前请阅读模型卡
 
 ---
@@ -125,5 +125,5 @@ Open the Vite URL (default http://localhost:3000).
 ### Licensing
 
 - Engine (repo root): MIT © antirez — see [LICENSE](LICENSE)
-- Studio (`studio/`): Apache-2.0 © diaoguoliang — see [studio/LICENSE](studio/LICENSE)
+- Studio (`studio/`): Apache-2.0 © skaiy — see [studio/LICENSE](studio/LICENSE)
 - Model weights are NOT included and are governed by the MiniMax H3 Community License (with territorial restrictions) — read the model card before downloading
