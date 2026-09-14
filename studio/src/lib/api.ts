@@ -21,7 +21,7 @@ export interface GenParams {
 export interface Job {
   id: string
   label: string
-  status: 'queued' | 'running' | 'done' | 'error' | 'cancelled'
+  status: 'queued' | 'running' | 'done' | 'error' | 'cancelled' | 'interrupted'
   phase: string | null
   done: number
   total: number
