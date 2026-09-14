@@ -14,7 +14,7 @@
 
 ### 功能
 
-https://github.com/skaiy/h3.c-studio/raw/main/docs/media/h3-studio-demo.mp4
+<video src="https://github.com/skaiy/h3.c-studio/raw/main/docs/media/h3-studio-demo.mp4" controls muted width="800"></video>
 
 | 工作室 · Studio | 分镜板 · Storyboard |
 |---|---|
@@ -75,6 +75,8 @@ This repository forks h3.c and adds a `studio/` web workbench: a prompt studio, 
 > The engine itself (everything at repo root) remains antirez's MIT project, unmodified — we only add on top. See [NOTICE](NOTICE).
 
 ### Features
+
+<video src="https://github.com/skaiy/h3.c-studio/raw/main/docs/media/h3-studio-demo.mp4" controls muted width="800"></video>
 
 | Studio | Storyboard |
 |---|---|
