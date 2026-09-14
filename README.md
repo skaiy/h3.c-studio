@@ -2,6 +2,8 @@
 
 [English](#english) | [中文](#中文)
 
+[![Engine License: MIT](https://img.shields.io/badge/engine%20license-MIT-blue.svg)](LICENSE) [![Studio License: Apache 2.0](https://img.shields.io/badge/studio%20license-Apache%202.0-green.svg)](studio/LICENSE)
+
 ---
 
 ## 中文
