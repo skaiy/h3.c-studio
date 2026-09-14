@@ -60,6 +60,12 @@ npm run dev        # 自动拉起 FastAPI 后端(:8765) + Vite 前端
 
 打开 Vite 输出的地址（默认 http://localhost:3000）即可使用。
 
+默认无需鉴权，适合本地单机使用。如果后端需要暴露在局域网/公网可达的地址上，设置 `H3_STUDIO_TOKEN` 环境变量后再启动，所有写操作（生成、删除、编辑分镜板等）将要求 `Authorization: Bearer <token>`；只读接口（预览、轮询）不受影响。前端在「设置 → 访问令牌」里填入同样的 token 即可继续使用。
+
+```bash
+H3_STUDIO_TOKEN=your-secret-token npm run dev
+```
+
 ### 协议
 
 - 引擎（根目录）：MIT © antirez（见 [LICENSE](LICENSE)）
@@ -121,6 +127,12 @@ npm run dev        # boots FastAPI backend (:8765) + Vite frontend
 ```
 
 Open the Vite URL (default http://localhost:3000).
+
+No auth is required by default, which is fine for local single-user use. If you expose the backend on a LAN- or internet-reachable address, set `H3_STUDIO_TOKEN` before starting it — every write operation (generate, delete, edit boards, etc.) will then require `Authorization: Bearer <token>`; read-only endpoints (preview, polling) are unaffected. Enter the same token under Settings → Access token in the UI.
+
+```bash
+H3_STUDIO_TOKEN=your-secret-token npm run dev
+```
 
 ### Licensing
 

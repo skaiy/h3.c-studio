@@ -41,8 +41,22 @@ export interface VideoItem {
   duration: number | null
 }
 
+const TOKEN_STORAGE_KEY = 'h3-studio-token'
+
+export function getAuthToken(): string {
+  return localStorage.getItem(TOKEN_STORAGE_KEY) ?? ''
+}
+
+export function setAuthToken(token: string) {
+  if (token) localStorage.setItem(TOKEN_STORAGE_KEY, token)
+  else localStorage.removeItem(TOKEN_STORAGE_KEY)
+}
+
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
-  const r = await fetch(url, init)
+  const token = getAuthToken()
+  const headers = new Headers(init?.headers)
+  if (token) headers.set('Authorization', `Bearer ${token}`)
+  const r = await fetch(url, { ...init, headers })
   if (!r.ok) throw new Error(`${r.status} ${await r.text()}`)
   return r.json()
 }

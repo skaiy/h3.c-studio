@@ -9,9 +9,9 @@ import time
 import uuid
 from pathlib import Path
 
-from fastapi import FastAPI, UploadFile, File, HTTPException
+from fastapi import FastAPI, Request, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
@@ -29,6 +29,27 @@ OUTPUTS.mkdir(parents=True, exist_ok=True)  # fresh clones have no outputs dir y
 
 app = FastAPI(title="H3 Studio")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
+
+# ---------------------------------------------------------------- auth
+#
+# Optional bearer-token auth, off by default. This is a single-user local
+# tool: with no H3_STUDIO_TOKEN set, behavior is unchanged (no auth at all).
+# Set H3_STUDIO_TOKEN to require `Authorization: Bearer <token>` on every
+# write request (POST/PUT/PATCH/DELETE) — this protects against anything
+# else on the same network/host from submitting jobs, deleting clips, or
+# editing boards. Read-only GETs (jobs/boards/videos/media) stay open so
+# playback and polling don't need the token wired through everywhere.
+STUDIO_TOKEN = os.environ.get("H3_STUDIO_TOKEN")
+
+
+@app.middleware("http")
+async def require_token_for_writes(request: Request, call_next):
+    if STUDIO_TOKEN and request.method not in ("GET", "HEAD", "OPTIONS"):
+        auth = request.headers.get("authorization", "")
+        if auth != f"Bearer {STUDIO_TOKEN}":
+            return JSONResponse({"detail": "missing or invalid bearer token"}, status_code=401)
+    return await call_next(request)
+
 
 # ---------------------------------------------------------------- jobs
 

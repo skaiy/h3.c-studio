@@ -23,6 +23,9 @@ def app_env(tmp_path, monkeypatch):
     monkeypatch.setenv("H3_UPLOADS_DIR", str(tmp_path / "uploads"))
     monkeypatch.setenv("H3_BOARDS_FILE", str(tmp_path / "storyboards.json"))
     monkeypatch.setenv("H3_JOBS_FILE", str(tmp_path / "jobs.json"))
+    # Auth is off by default in tests unless a test explicitly opts in via
+    # monkeypatch.setenv("H3_STUDIO_TOKEN", ...) before calling this fixture.
+    monkeypatch.delenv("H3_STUDIO_TOKEN", raising=False)
 
     if "main" in sys.modules:
         module = importlib.reload(sys.modules["main"])

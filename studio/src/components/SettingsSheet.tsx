@@ -1,18 +1,20 @@
 import { useEffect, useState } from 'react'
-import { api } from '@/lib/api'
+import { api, getAuthToken, setAuthToken } from '@/lib/api'
 import { useI18n } from '@/lib/useI18n'
 import { LANGS, type Lang } from '@/lib/i18nData'
 import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { RadioGroup, RadioGroupItem } from '@/components/ui/radio-group'
 import { Label } from '@/components/ui/label'
+import { Input } from '@/components/ui/input'
 
 const STUDIO_VERSION = 'v0.2'
 const GITHUB_URL = 'https://github.com/skaiy/h3.c-studio'
 
 /** Config registry: each entry declares a section + the field type it renders. Add more here in later phases. */
-type SettingsSection = { id: string; titleKey: 'settingsLanguage' | 'settingsAbout'; type: 'language' | 'about' }
+type SettingsSection = { id: string; titleKey: 'settingsLanguage' | 'settingsAuth' | 'settingsAbout'; type: 'language' | 'auth' | 'about' }
 const SETTINGS_SECTIONS: SettingsSection[] = [
   { id: 'language', titleKey: 'settingsLanguage', type: 'language' },
+  { id: 'auth', titleKey: 'settingsAuth', type: 'auth' },
   { id: 'about', titleKey: 'settingsAbout', type: 'about' },
 ]
 
@@ -27,6 +29,27 @@ function LanguageField() {
         </div>
       ))}
     </RadioGroup>
+  )
+}
+
+function AuthField() {
+  const { t } = useI18n()
+  const [token, setToken] = useState(() => getAuthToken())
+  const commit = (v: string) => {
+    setToken(v)
+    setAuthToken(v)
+  }
+  return (
+    <div className="flex flex-col gap-1.5">
+      <Input
+        type="password"
+        value={token}
+        onChange={(e) => commit(e.target.value)}
+        placeholder={t('settingsAuthPlaceholder')}
+        className="h-8 text-[12px]"
+      />
+      <p className="text-[11px] text-muted-foreground leading-snug">{t('settingsAuthHint')}</p>
+    </div>
   )
 }
 
@@ -72,7 +95,9 @@ export default function SettingsSheet({ open, onOpenChange }: Props) {
             <div key={section.id}>
               <div className="bar !px-0">{t(section.titleKey)}</div>
               <div className="pt-2">
-                {section.type === 'language' ? <LanguageField /> : <AboutField />}
+                {section.type === 'language' ? <LanguageField />
+                  : section.type === 'auth' ? <AuthField />
+                  : <AboutField />}
               </div>
             </div>
           ))}
