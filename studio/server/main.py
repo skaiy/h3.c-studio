@@ -21,9 +21,11 @@ H3_DIR = Path(os.environ.get("H3_ENGINE_DIR", ROOT.parent))
 H3_BIN = H3_DIR / "h3"
 MODEL_DIR = Path(os.environ.get("H3_MODEL_DIR", H3_DIR / "MiniMax-H3"))
 OUTPUTS = Path(os.environ.get("H3_OUTPUTS_DIR", H3_DIR / "outputs"))
-UPLOADS = ROOT / "uploads"
-UPLOADS.mkdir(exist_ok=True)
-OUTPUTS.mkdir(exist_ok=True)  # fresh clones have no outputs dir yet
+# UPLOADS/BOARDS_FILE overrides exist mainly so the test suite (studio/server/tests/)
+# can point a whole backend instance at an isolated tmp directory.
+UPLOADS = Path(os.environ.get("H3_UPLOADS_DIR", ROOT / "uploads"))
+UPLOADS.mkdir(parents=True, exist_ok=True)
+OUTPUTS.mkdir(parents=True, exist_ok=True)  # fresh clones have no outputs dir yet
 
 app = FastAPI(title="H3 Studio")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -152,7 +154,7 @@ def launch_next():
 
 # ---------------------------------------------------------------- storyboards
 
-BOARDS_FILE = ROOT / "storyboards.json"
+BOARDS_FILE = Path(os.environ.get("H3_BOARDS_FILE", ROOT / "storyboards.json"))
 boards: dict[str, dict] = {}
 if BOARDS_FILE.exists():
     try:

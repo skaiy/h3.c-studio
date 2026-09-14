@@ -34,6 +34,8 @@ studio/node_modules/
 studio/dist/
 studio/server/.venv/
 studio/uploads/
+studio/server/.pytest_cache/
+studio/server/**/__pycache__/
 
 # Local symlinks (engine weights & personal clip library stay local)
 outputs

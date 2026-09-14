@@ -60,7 +60,10 @@ jobs:
         python-version: "3.12"
 
     - name: Install dependencies
-      run: pip install fastapi "uvicorn[standard]" pydantic python-multipart
+      run: pip install fastapi "uvicorn[standard]" pydantic python-multipart pytest httpx
 
     - name: Import check
       run: python -c "import main; print('backend imports OK')"
+
+    - name: Unit tests
+      run: pytest -v

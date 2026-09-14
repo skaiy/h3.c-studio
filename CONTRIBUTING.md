@@ -25,6 +25,11 @@ cd studio && npm install && npm run dev
 # Studio 后端（FastAPI，dev 脚本会自动拉起）
 # 或手动：uv venv server/.venv && uv pip install --python server/.venv/bin/python \
 #   fastapi "uvicorn[standard]" pydantic python-multipart
+
+# 后端单测（不需要真实 h3 引擎/模型权重，mock 了 subprocess）
+cd studio/server
+uv pip install --python .venv/bin/python pytest httpx
+.venv/bin/pytest -v
 ```
 
 模型权重（`MiniMax-H3/`）不进仓库，下载方式见根目录 [README-ENGINE.md](README-ENGINE.md)。
@@ -32,8 +37,8 @@ cd studio && npm install && npm run dev
 ### 提交规范
 
 - **前端**：`npm run build` 必须通过（含 tsc 类型检查）。UI 文案请走 `src/lib/i18n.tsx` 的字典（中英双语都要加）。
-- **后端**：标准 PEP 8 风格即可；新增接口请在 PR 描述里附 `curl` 验证结果。
-- **CI**：push 前确保本地 `make -j8` 和 `npm run build` 通过——GitHub Actions 会跑同样的检查。
+- **后端**：标准 PEP 8 风格即可；改动 `server/main.py` 请跑 `studio/server` 下的 `pytest -v`，新增接口在 `studio/server/tests/` 补对应用例；新增接口也请在 PR 描述里附 `curl` 验证结果。
+- **CI**：push 前确保本地 `make -j8`、`npm run build` 和 `pytest`（在 `studio/server/` 下）通过——GitHub Actions 会跑同样的检查。
 - **Commit message**：英文，一句话说明做什么 + 为什么；参考 git log 的现有风格。
 - **大改动先开 issue 讨论**，避免方向性返工。
 
@@ -72,6 +77,11 @@ cd studio && npm install && npm run dev
 # Studio backend (the dev script starts it automatically)
 # Or manually: uv venv server/.venv && uv pip install --python server/.venv/bin/python \
 #   fastapi "uvicorn[standard]" pydantic python-multipart
+
+# Backend unit tests (no real h3 engine/model weights needed, subprocess is mocked)
+cd studio/server
+uv pip install --python .venv/bin/python pytest httpx
+.venv/bin/pytest -v
 ```
 
 Model weights (`MiniMax-H3/`) are not in the repo — see [README-ENGINE.md](README-ENGINE.md) for download instructions.
@@ -79,8 +89,8 @@ Model weights (`MiniMax-H3/`) are not in the repo — see [README-ENGINE.md](REA
 ### Conventions
 
 - **Frontend**: `npm run build` must pass (includes tsc type checking). UI strings go through the `src/lib/i18n.tsx` dictionary — add both Chinese and English.
-- **Backend**: plain PEP 8; include `curl` verification output in your PR description for new endpoints.
-- **CI**: make sure `make -j8` and `npm run build` pass locally — GitHub Actions runs the same checks.
+- **Backend**: plain PEP 8; if you touch `server/main.py`, run `pytest -v` from `studio/server` and add matching cases under `studio/server/tests/` for new endpoints; also include `curl` verification output in your PR description for new endpoints.
+- **CI**: make sure `make -j8`, `npm run build`, and `pytest` (from `studio/server/`) pass locally — GitHub Actions runs the same checks.
 - **Commit messages**: English, one line on what + why; follow the existing git log style.
 - **Open an issue before large changes** to avoid misdirected work.
 
