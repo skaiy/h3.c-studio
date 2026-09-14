@@ -71,6 +71,17 @@ npm run dev        # 自动拉起 FastAPI 后端(:8765) + Vite 前端
 H3_STUDIO_TOKEN=your-secret-token npm run dev
 ```
 
+### 更新履历
+
+| 日期 | 更新内容 |
+|---|---|
+| 2026-09-13 | 首个版本发布：提示词工作室、条件输入（首尾帧/参考图）、实时进度、作品库、末帧接力 |
+| 2026-09-13 | 新增分镜板：多镜头卡片、自动末帧接力、一键无损拼接导出 |
+| 2026-09-14 | v0.2 统一工作台：五区信息架构、分镜板 CRUD + 拖拽排序、设置面板 + 中/英/日/韩四语言、连续预览、空状态引导 |
+| 2026-09-14 | Turbo 6 步预设、断点续跑界面化、发布 h3.c 与其他推理栈对比分析文档、README 补充演示视频与截图 |
+| 2026-09-14 | 后端加固：pytest 单测套件（#1）、任务持久化重启不丢失（#3）、可选 Bearer token 鉴权（#2） |
+| 2026-09-14 | 吸收 [Henninges/h3-studio](https://github.com/Henninges/h3-studio) 优点：参考音频条件输入、结构化 Context-IR 提示词字段（空字段智能默认值）、新增德语，界面增至五语言 |
+
 ### 协议
 
 - 引擎（根目录）：MIT © antirez（见 [LICENSE](LICENSE)）
@@ -143,6 +154,17 @@ No auth is required by default, which is fine for local single-user use. If you 
 ```bash
 H3_STUDIO_TOKEN=your-secret-token npm run dev
 ```
+
+### Changelog
+
+| Date | Changes |
+|---|---|
+| 2026-09-13 | Initial release: prompt studio, conditioning (first/last frame + reference images), live progress, clip library, chain last frame |
+| 2026-09-13 | Added Storyboard view: multi-shot cards, automatic last-frame chaining, one-click lossless concat export |
+| 2026-09-14 | v0.2 unified workspace: five-zone IA, board switcher CRUD + drag-reorder, settings panel + 4-language i18n (zh/en/ja/ko), sequence preview, guided empty states |
+| 2026-09-14 | Turbo 6-step preset, resumable checkpoints in the UI, published the "h3.c vs other stacks" comparison doc, added demo video + screenshots to README |
+| 2026-09-14 | Backend hardening: pytest test suite (#1), job persistence across restarts (#3), optional Bearer-token auth (#2) |
+| 2026-09-14 | Absorbed ideas from [Henninges/h3-studio](https://github.com/Henninges/h3-studio): reference-audio conditioning, structured Context-IR prompt fields with smart defaults, added German — 5 languages total |
 
 ### Licensing
 
