@@ -22,6 +22,7 @@ MODEL_DIR = Path(os.environ.get("H3_MODEL_DIR", H3_DIR / "MiniMax-H3"))
 OUTPUTS = Path(os.environ.get("H3_OUTPUTS_DIR", H3_DIR / "outputs"))
 UPLOADS = ROOT / "uploads"
 UPLOADS.mkdir(exist_ok=True)
+OUTPUTS.mkdir(exist_ok=True)  # fresh clones have no outputs dir yet
 
 app = FastAPI(title="H3 Studio")
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])

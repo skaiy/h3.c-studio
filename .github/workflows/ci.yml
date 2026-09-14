@@ -1,0 +1,60 @@
+name: CI
+
+on:
+  push:
+    branches: [ "main" ]
+  pull_request:
+    branches: [ "main" ]
+
+jobs:
+  engine:
+    name: Build h3-metal engine (macOS)
+    runs-on: macos-latest
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Build engine
+      run: make -j8
+
+    - name: Smoke check binary
+      run: ./h3 --help > /dev/null && echo "engine binary OK"
+
+  studio-frontend:
+    name: Build Studio frontend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: studio
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-node@v4
+      with:
+        node-version: 22
+        cache: npm
+        cache-dependency-path: studio/package-lock.json
+
+    - name: Install dependencies
+      run: npm install --no-audit --no-fund
+
+    - name: Type-check and build
+      run: npm run build
+
+  studio-backend:
+    name: Check Studio backend
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: studio/server
+    steps:
+    - uses: actions/checkout@v4
+
+    - uses: actions/setup-python@v5
+      with:
+        python-version: "3.12"
+
+    - name: Install dependencies
+      run: pip install fastapi "uvicorn[standard]" pydantic python-multipart
+
+    - name: Import check
+      run: python -c "import main; print('backend imports OK')"
