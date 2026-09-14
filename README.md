@@ -16,9 +16,9 @@
 
 <video src="https://github.com/skaiy/h3.c-studio/raw/main/docs/media/h3-studio-demo.mp4" controls muted width="800"></video>
 
-| 工作室 · Studio | 分镜板 · Storyboard |
+| 统一工作台 · Unified Workspace | 分镜板切换 · Board Switcher |
 |---|---|
-| ![工作室](docs/media/studio-playing.jpg) | ![分镜板](docs/media/storyboard.jpg) |
+| ![统一工作台](docs/media/workspace.jpg) | ![分镜板切换](docs/media/board-switcher.jpg) |
 
 
 - 🎛 **提示词工作室**：Scene / Action / Camera / Look / Audio 五段式编辑，6 种画幅，1–15 秒时长，4 档速度/画质预设，seed 控制
@@ -78,9 +78,9 @@ This repository forks h3.c and adds a `studio/` web workbench: a prompt studio, 
 
 <video src="https://github.com/skaiy/h3.c-studio/raw/main/docs/media/h3-studio-demo.mp4" controls muted width="800"></video>
 
-| Studio | Storyboard |
+| Unified Workspace | Board Switcher |
 |---|---|
-| ![Studio](docs/media/studio-playing.jpg) | ![Storyboard](docs/media/storyboard.jpg) |
+| ![Unified Workspace](docs/media/workspace.jpg) | ![Board Switcher](docs/media/board-switcher.jpg) |
 
 
 - 🎛 **Prompt studio**: Scene / Action / Camera / Look / Audio structured editing, 6 canvas sizes, 1–15s duration, 4 speed/quality presets, seed control
