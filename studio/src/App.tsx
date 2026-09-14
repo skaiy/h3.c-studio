@@ -1,14 +1,15 @@
-import { Routes, Route } from 'react-router'
+import { Routes, Route, Navigate } from 'react-router'
 import { I18nProvider } from './lib/i18n'
-import Home from './pages/Home'
-import BoardPage from './pages/Board'
+import Workspace from './pages/Workspace'
 
 export default function App() {
   return (
     <I18nProvider>
       <Routes>
-        <Route path="/" element={<Home />} />
-        <Route path="/board" element={<BoardPage />} />
+        <Route path="/" element={<Workspace />} />
+        <Route path="/b/:boardId" element={<Workspace />} />
+        <Route path="/board" element={<Navigate to="/" replace />} />
+        <Route path="*" element={<Navigate to="/" replace />} />
       </Routes>
     </I18nProvider>
   )

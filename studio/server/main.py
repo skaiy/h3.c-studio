@@ -54,6 +54,8 @@ class GenRequest(BaseModel):
     turbo: bool = False              # use the folded Turbo-LoRA checkpoint (6-step distilled)
     checkpoint_after_step: int | None = None   # pause after N steps, save ckpt + sigma-zero draft
     resume: str | None = None        # checkpoint filename inside outputs/ to continue from
+    board_id: str | None = None      # when set, write status/output back to this board shot
+    shot_id: str | None = None
     label: str | None = None
 
 
@@ -123,6 +125,16 @@ def run_job(job_id: str):
         job["log"].append(f"backend error: {e}")
     job["finished"] = time.time()
     job.pop("proc", None)
+    if req.board_id and req.shot_id and req.board_id in boards:
+        b = boards[req.board_id]
+        for s in b["shots"]:
+            if s["id"] == req.shot_id:
+                s["status"] = job["status"]
+                if job["status"] == "done" and job.get("output"):
+                    s["output"] = Path(job["output"]).name
+                break
+        b["modifiedAt"] = time.time()
+        save_boards()
     launch_next()
 
 
@@ -144,6 +156,10 @@ boards: dict[str, dict] = {}
 if BOARDS_FILE.exists():
     try:
         boards = json.loads(BOARDS_FILE.read_text())
+        now0 = time.time()
+        for b in boards.values():
+            b.setdefault("createdAt", now0)
+            b.setdefault("modifiedAt", b.get("createdAt", now0))
     except Exception:                                            # noqa: BLE001
         boards = {}
 
@@ -177,6 +193,8 @@ class Board(BaseModel):
     shots: list[Shot] = []
     status: str = "idle"          # idle / running / done / error
     result: str | None = None     # concatenated output name
+    createdAt: float = 0.0
+    modifiedAt: float = 0.0
 
 
 def extract_last_frame_of(video_name: str) -> str:
@@ -233,16 +251,59 @@ def board_run_worker(board_id: str):
 
 @app.get("/api/boards")
 def list_boards():
-    return list(boards.values())
+    out = []
+    for b in sorted(boards.values(), key=lambda x: x.get("modifiedAt", 0), reverse=True):
+        out.append({"id": b["id"], "name": b["name"], "status": b["status"],
+                    "result": b.get("result"), "shotCount": len(b["shots"]),
+                    "doneCount": sum(1 for s in b["shots"] if s["status"] == "done"),
+                    "duration": round(sum(s.get("seconds", 0) for s in b["shots"]), 1),
+                    "createdAt": b.get("createdAt", 0), "modifiedAt": b.get("modifiedAt", 0)})
+    return out
+
+
+@app.get("/api/boards/{board_id}")
+def get_board(board_id: str):
+    if board_id not in boards:
+        raise HTTPException(404)
+    return boards[board_id]
 
 
 @app.post("/api/boards")
 def upsert_board(board: Board):
+    now = time.time()
     if not board.id:
         board.id = uuid.uuid4().hex[:8]
+        board.createdAt = now
+        if not board.shots:
+            board.shots = [Shot(id="s" + uuid.uuid4().hex[:6], prompt="")]
+    board.modifiedAt = now
+    if board.id in boards and not board.createdAt:
+        board.createdAt = boards[board.id].get("createdAt", now)
     boards[board.id] = board.model_dump()
     save_boards()
     return boards[board.id]
+
+
+@app.post("/api/boards/{board_id}/duplicate")
+def duplicate_board(board_id: str):
+    src = boards.get(board_id)
+    if not src:
+        raise HTTPException(404)
+    now = time.time()
+    copy = json.loads(json.dumps(src))
+    copy["id"] = uuid.uuid4().hex[:8]
+    copy["name"] = src["name"] + " 副本"
+    copy["status"] = "idle"
+    copy["result"] = None
+    copy["createdAt"] = copy["modifiedAt"] = now
+    for s in copy["shots"]:
+        s["id"] = "s" + uuid.uuid4().hex[:6]
+        s["status"] = "idle"
+        s["output"] = None
+        s["job_id"] = None
+    boards[copy["id"]] = copy
+    save_boards()
+    return copy
 
 
 @app.delete("/api/boards/{board_id}")
@@ -263,6 +324,7 @@ def run_board(board_id: str):
         raise HTTPException(400, "no shots")
     board["status"] = "running"
     board["result"] = None
+    board["modifiedAt"] = time.time()
     for s in board["shots"]:
         if s["status"] != "done":
             s.update(status="idle", output=None)
@@ -289,6 +351,7 @@ def concat_board(board_id: str):
     if r.returncode != 0:
         raise HTTPException(500, r.stderr[-300:])
     board["result"] = out_name
+    board["modifiedAt"] = time.time()
     save_boards()
     return {"output": out_name}
 

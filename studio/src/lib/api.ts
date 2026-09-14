@@ -47,6 +47,47 @@ async function req<T>(url: string, init?: RequestInit): Promise<T> {
   return r.json()
 }
 
+export interface Shot {
+  id: string
+  prompt: string
+  width: number
+  height: number
+  seconds: number
+  steps: number
+  layers: number
+  reuse: number
+  seed: number
+  turbo?: boolean
+  first_frame: string | null
+  last_frame: string | null
+  status: string
+  output: string | null
+  job_id: string | null
+}
+
+export interface Board {
+  id: string
+  name: string
+  chain: boolean
+  shots: Shot[]
+  status: string
+  result: string | null
+  createdAt: number
+  modifiedAt: number
+}
+
+export interface BoardSummary {
+  id: string
+  name: string
+  status: string
+  result: string | null
+  shotCount: number
+  doneCount: number
+  duration: number
+  createdAt: number
+  modifiedAt: number
+}
+
 export const api = {
   info: () => req<{ info: string }>('/api/info'),
   videos: () => req<VideoItem[]>('/api/videos'),
@@ -67,4 +108,18 @@ export const api = {
   },
   extractLastFrame: (name: string) =>
     req<{ name: string }>(`/api/extract-last-frame/${encodeURIComponent(name)}`, { method: 'POST' }),
+  boards: () => req<BoardSummary[]>('/api/boards'),
+  board: (id: string) => req<Board>(`/api/boards/${id}`),
+  saveBoard: (b: Board) =>
+    req<Board>('/api/boards', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(b),
+    }),
+  deleteBoard: (id: string) => req(`/api/boards/${id}`, { method: 'DELETE' }),
+  duplicateBoard: (id: string) =>
+    req<Board>(`/api/boards/${id}/duplicate`, { method: 'POST' }),
+  runBoard: (id: string) => req(`/api/boards/${id}/run`, { method: 'POST' }),
+  concatBoard: (id: string) =>
+    req<{ output: string }>(`/api/boards/${id}/concat`, { method: 'POST' }),
 }
