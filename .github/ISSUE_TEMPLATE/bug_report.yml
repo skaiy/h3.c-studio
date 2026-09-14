@@ -1,0 +1,53 @@
+name: Bug 报告 / Bug Report
+description: 报告引擎或 Studio 的问题 / Report a problem with the engine or Studio
+title: "[Bug] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        感谢报告！请尽量提供以下信息，双语（中/英）描述均可。
+        Thanks for the report! Feel free to write in Chinese or English.
+  - type: dropdown
+    id: area
+    attributes:
+      label: 涉及范围 / Area
+      options:
+        - Studio 前端 / Studio frontend
+        - Studio 后端 / Studio backend (FastAPI)
+        - h3 引擎 / h3 engine (C/Metal)
+        - 构建/CI / Build or CI
+        - 文档 / Documentation
+    validations:
+      required: true
+  - type: textarea
+    id: what
+    attributes:
+      label: 发生了什么 / What happened
+      description: 期望行为 vs 实际行为 / Expected vs actual behavior
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 复现步骤 / Steps to reproduce
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: 环境 / Environment
+      description: 芯片型号、macOS 版本、内存；浏览器（前端问题时）
+      placeholder: "e.g. M5 Max 128GB, macOS 26.5, Chrome 140"
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: 日志 / Logs
+      description: 相关终端输出、后端日志或浏览器控制台报错（请用 ``` 包裹）
+      render: text
