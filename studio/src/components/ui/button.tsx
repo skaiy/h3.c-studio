@@ -59,4 +59,8 @@ function Button({
   )
 }
 
+// buttonVariants is exported alongside Button so other shadcn components (e.g. alert-dialog)
+// can reuse the variant classes; this is the upstream vendor pattern, tracked at
+// https://github.com/shadcn-ui/ui/issues/7736
+// eslint-disable-next-line react-refresh/only-export-components
 export { Button, buttonVariants }

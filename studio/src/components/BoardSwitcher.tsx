@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { useNavigate } from 'react-router'
 import { api, type BoardSummary } from '@/lib/api'
-import { useI18n } from '@/lib/i18n'
+import { useI18n } from '@/lib/useI18n'
 
 function relTime(ts: number) {
   const d = Date.now() / 1000 - ts

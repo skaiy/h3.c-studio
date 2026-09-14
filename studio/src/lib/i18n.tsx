@@ -1,16 +1,9 @@
-import { createContext, useContext, useState, type ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { VALID_LANGS, type I18nKey, type Lang } from '@/lib/i18nData'
 import { translate } from '@/lib/i18nResources'
+import { I18nContext } from '@/lib/i18nContext'
 
 export type { Lang, I18nKey }
-
-interface I18nCtx {
-  lang: Lang
-  t: (k: I18nKey) => string
-  setLang: (l: Lang) => void
-}
-
-const Ctx = createContext<I18nCtx>({ lang: 'zh', t: (k) => translate('zh', k), setLang: () => {} })
 
 const STORAGE_KEY = 'h3-studio-lang'
 
@@ -23,7 +16,5 @@ export function I18nProvider({ children }: { children: ReactNode }) {
     setLangState(l)
     localStorage.setItem(STORAGE_KEY, l)
   }
-  return <Ctx.Provider value={{ lang, t: (k) => translate(lang, k), setLang }}>{children}</Ctx.Provider>
+  return <I18nContext.Provider value={{ lang, t: (k) => translate(lang, k), setLang }}>{children}</I18nContext.Provider>
 }
-
-export const useI18n = () => useContext(Ctx)

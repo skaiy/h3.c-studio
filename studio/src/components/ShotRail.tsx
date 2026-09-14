@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { type Board, type Shot } from '@/lib/api'
-import { useI18n } from '@/lib/i18n'
+import { useI18n } from '@/lib/useI18n'
 
 const STATUS_DOT: Record<string, string> = {
   idle: 'bg-muted-foreground/40',

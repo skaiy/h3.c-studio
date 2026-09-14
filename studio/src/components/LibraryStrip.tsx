@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { type VideoItem } from '@/lib/api'
-import { useI18n } from '@/lib/i18n'
+import { useI18n } from '@/lib/useI18n'
 
 interface Props {
   videos: VideoItem[]

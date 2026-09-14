@@ -1,6 +1,7 @@
 import { useRef } from 'react'
 import { api, type Shot } from '@/lib/api'
-import { useI18n, type I18nKey } from '@/lib/i18n'
+import { type I18nKey } from '@/lib/i18n'
+import { useI18n } from '@/lib/useI18n'
 import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
 import { Textarea } from '@/components/ui/textarea'

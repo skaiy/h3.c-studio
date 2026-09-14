@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { api, type Job } from '@/lib/api'
-import { useI18n } from '@/lib/i18n'
+import { useI18n } from '@/lib/useI18n'
 import { Progress } from '@/components/ui/progress'
 
 interface Props {
