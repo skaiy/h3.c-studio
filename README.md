@@ -28,6 +28,10 @@
 - **断点续跑**（#2）：`--checkpoint` / `--resume` 长视频中途暂停出草稿、随时续跑
 - **进度与健壮性**：VAE 解码阶段进度上报（#35）、管道模式即时 flush（#62）、RGB 有限值保护（#9）、iPhone .mov 兼容（#31）
 
+### 深度阅读
+
+- [h3.c vs 其他视频生成框架：优劣势分析](docs/h3c-vs-other-stacks.md)——和 SGLang / ComfyUI / VDN / MLX-H3 怎么选
+
 ### 快速开始
 
 ```bash
@@ -78,6 +82,10 @@ This repository forks h3.c and adds a `studio/` web workbench: a prompt studio, 
 - **Turbo LoRA folding** (#14): `tools/fold_turbo_lora.py` bakes 5–6 step distilled sampling into the checkpoint for a 3–4x speedup (Studio ships a one-click "Turbo 6-step ⚡" preset wired to the folded model dir)
 - **Resumable checkpoints** (#2): `--checkpoint` / `--resume` pauses long renders with a sigma-zero draft and continues later
 - **Progress & robustness**: VAE decode progress reporting (#35), immediate pipe flush (#62), finite-RGB guard (#9), iPhone .mov tolerance (#31)
+
+### Further reading
+
+- [h3.c vs other video generation stacks](docs/h3c-vs-other-stacks.md) — how to choose between h3.c, SGLang, ComfyUI, VDN and MLX-H3
 
 ### Quick start
 
