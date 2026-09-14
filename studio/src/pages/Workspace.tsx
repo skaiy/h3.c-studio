@@ -65,12 +65,22 @@ export default function Workspace() {
 
   useEffect(() => {
     if (!boardId) return
+    // Data-fetching + polling Effect (react.dev/learn/synchronizing-with-effects#fetching-data);
+    // setBoard only actually runs after the `await` inside refreshBoard, never synchronously.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     refreshBoard(boardId)
     const t = setInterval(() => refreshBoard(boardId), 2500)
     return () => clearInterval(t)
   }, [boardId, refreshBoard])
 
-  useEffect(() => setSequenceIdx(null), [boardId])
+  // Reset sequence-preview when switching boards. Derived from a render-time comparison
+  // (react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes)
+  // instead of an Effect, so it applies before paint with no extra render round-trip.
+  const [seenBoardId, setSeenBoardId] = useState(boardId)
+  if (boardId !== seenBoardId) {
+    setSeenBoardId(boardId)
+    setSequenceIdx(null)
+  }
 
   const refreshJobs = useCallback(async () => {
     try {
@@ -85,6 +95,8 @@ export default function Workspace() {
   }, [])
 
   useEffect(() => {
+    // Data-fetching + polling Effect, same rationale as the board-polling one above.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     refreshJobs()
     api.info().then((r) => {
       const m = r.info.match(/Device: (.+)/)
@@ -95,10 +107,13 @@ export default function Workspace() {
   }, [refreshJobs])
 
   const runningJob = jobs.find((j) => j.status === 'running') ?? null
-  useEffect(() => {
+  // Auto-open the job-progress view the moment a new job starts running — derived at render
+  // time (same technique as the sequence-reset above) instead of an Effect.
+  const [seenRunningJobId, setSeenRunningJobId] = useState<string | null>(null)
+  if ((runningJob?.id ?? null) !== seenRunningJobId) {
+    setSeenRunningJobId(runningJob?.id ?? null)
     if (runningJob) setWatchJob(true)
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [runningJob?.id])
+  }
 
   // 自动保存（防抖 800ms）
   const persist = useCallback((b: Board) => {
