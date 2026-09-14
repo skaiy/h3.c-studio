@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { api, type Board, type BoardSummary, type GenParams, type Job, type Shot, type VideoItem } from '@/lib/api'
 import { useI18n } from '@/lib/i18n'
+import { insertShotAt, duplicateShotAt, removeShotAt, moveShot, nextSelectedAfterDelete } from '@/lib/shotOps'
 import BoardSwitcher from '@/components/BoardSwitcher'
 import ShotRail from '@/components/ShotRail'
 import ShotInspector from '@/components/ShotInspector'
@@ -173,37 +174,28 @@ export default function Workspace() {
   }
 
   const insertShot = (at: number) => {
-    patchBoard((b) => {
-      const shots = [...b.shots]
-      shots.splice(at, 0, newShot())
-      return { ...b, shots }
-    })
+    patchBoard((b) => ({ ...b, shots: insertShotAt(b.shots, at, newShot()) }))
     setSelected(at)
   }
 
   const duplicateShot = (i: number) => {
-    patchBoard((b) => {
-      const src = b.shots[i]
-      const copy = { ...src, id: `s${Date.now().toString(36)}`, status: 'idle', output: null, job_id: null }
-      const shots = [...b.shots]
-      shots.splice(i + 1, 0, copy)
-      return { ...b, shots }
-    })
+    patchBoard((b) => ({
+      ...b,
+      shots: duplicateShotAt(b.shots, i, (src) => ({
+        ...src, id: `s${Date.now().toString(36)}`, status: 'idle', output: null, job_id: null,
+      })),
+    }))
     setSelected(i + 1)
   }
 
   const deleteShot = (i: number) => {
-    patchBoard((b) => ({ ...b, shots: b.shots.filter((_, xi) => xi !== i) }))
-    setSelected((sel) => Math.max(0, sel > i ? sel - 1 : Math.min(sel, board!.shots.length - 2)))
+    const preDeleteLength = board!.shots.length
+    patchBoard((b) => ({ ...b, shots: removeShotAt(b.shots, i) }))
+    setSelected((sel) => nextSelectedAfterDelete(sel, i, preDeleteLength))
   }
 
   const reorderShots = (from: number, to: number) => {
-    patchBoard((b) => {
-      const shots = [...b.shots]
-      const [moved] = shots.splice(from, 1)
-      shots.splice(to, 0, moved)
-      return { ...b, shots }
-    })
+    patchBoard((b) => ({ ...b, shots: moveShot(b.shots, from, to) }))
     setSelected(to)
   }
 

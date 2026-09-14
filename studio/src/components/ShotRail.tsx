@@ -37,7 +37,7 @@ export default function ShotRail({ board, selected, onSelect, onAddShot, onInser
       <div className="flex-1 overflow-y-auto p-1 flex flex-col">
         {board.shots.map((s, i) => (
           <div key={s.id}>
-            <InsertLine active={dropAt === i} onClick={() => onInsertShot(i)}
+            <InsertLine testId={`insert-${i}`} active={dropAt === i} onClick={() => onInsertShot(i)}
               onDragOver={(e) => { e.preventDefault(); setDropAt(i) }} />
             <ShotCard
               shot={s}
@@ -60,7 +60,7 @@ export default function ShotRail({ board, selected, onSelect, onAddShot, onInser
             />
           </div>
         ))}
-        <InsertLine active={dropAt === board.shots.length} onClick={() => onInsertShot(board.shots.length)}
+        <InsertLine testId={`insert-${board.shots.length}`} active={dropAt === board.shots.length} onClick={() => onInsertShot(board.shots.length)}
           onDragOver={(e) => { e.preventDefault(); setDropAt(board.shots.length) }} />
         <button
           onClick={onAddShot}
@@ -83,9 +83,9 @@ export default function ShotRail({ board, selected, onSelect, onAddShot, onInser
   )
 }
 
-function InsertLine({ active, onClick, onDragOver }: { active: boolean; onClick: () => void; onDragOver: (e: React.DragEvent) => void }) {
+function InsertLine({ active, onClick, onDragOver, testId }: { active: boolean; onClick: () => void; onDragOver: (e: React.DragEvent) => void; testId: string }) {
   return (
-    <div onClick={onClick} onDragOver={onDragOver}
+    <div data-testid={testId} onClick={onClick} onDragOver={onDragOver}
       className={`group/ins h-2 flex items-center justify-center cursor-pointer transition-colors ${active ? 'bg-white/30' : 'hover:bg-white/10'}`}>
       <span className="text-[9px] text-transparent group-hover/ins:text-white leading-none">+</span>
     </div>
@@ -113,6 +113,7 @@ function ShotCard({ shot, index, active, dragging, onClick, onDragStart, onDragE
   const [confirming, setConfirming] = useState(false)
   return (
     <div
+      data-testid={`shot-card-${index}`}
       draggable
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
@@ -134,10 +135,11 @@ function ShotCard({ shot, index, active, dragging, onClick, onDragStart, onDragE
       </div>
       <div className="absolute top-0.5 left-1/2 -translate-x-1/2 text-[8px] text-white/40 opacity-0 group-hover:opacity-100 select-none">⋮⋮</div>
       <div className="absolute top-0.5 right-0.5 hidden group-hover:flex gap-0.5">
-        <button title={duplicateTitle}
+        <button data-testid="shot-duplicate" title={duplicateTitle}
           onClick={(e) => { e.stopPropagation(); onDuplicate() }}
           className="w-5 h-5 text-[10px] bg-black/70 text-white border border-border hover:border-white">⧉</button>
         <button
+          data-testid="shot-delete"
           title={deleteLabel}
           onClick={(e) => {
             e.stopPropagation()

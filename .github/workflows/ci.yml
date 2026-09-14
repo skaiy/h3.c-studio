@@ -40,6 +40,9 @@ jobs:
     - name: Type-check and build
       run: npm run build
 
+    - name: Unit tests
+      run: npm test
+
   studio-backend:
     name: Check Studio backend
     runs-on: ubuntu-latest
