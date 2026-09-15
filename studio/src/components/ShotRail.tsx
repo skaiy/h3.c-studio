@@ -14,6 +14,7 @@ const STATUS_DOT: Record<string, string> = {
 
 interface Props {
   board: Board
+  disabled?: boolean
   selected: number
   onSelect: (i: number) => void
   onAddShot: () => void
@@ -27,7 +28,7 @@ interface Props {
   onToggleSequence: () => void
 }
 
-export default function ShotRail({ board, selected, onSelect, onAddShot, onInsertShot, onDuplicateShot, onDeleteShot, onReorder, onRunAll, onConcat, sequencing, onToggleSequence }: Props) {
+export default function ShotRail({ board, disabled = false, selected, onSelect, onAddShot, onInsertShot, onDuplicateShot, onDeleteShot, onReorder, onRunAll, onConcat, sequencing, onToggleSequence }: Props) {
   const { t } = useI18n()
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [dropAt, setDropAt] = useState<number | null>(null)
@@ -39,10 +40,11 @@ export default function ShotRail({ board, selected, onSelect, onAddShot, onInser
       <div className="flex-1 overflow-y-auto p-1 flex flex-col">
         {board.shots.map((s, i) => (
           <div key={s.id}>
-            <InsertLine testId={`insert-${i}`} active={dropAt === i} onClick={() => onInsertShot(i)}
+            <InsertLine testId={`insert-${i}`} active={dropAt === i} onClick={() => { if (!disabled) onInsertShot(i) }}
               onDragOver={(e) => { e.preventDefault(); setDropAt(i) }} />
             <ShotCard
               shot={s}
+              disabled={disabled}
               index={i}
               active={i === selected}
               dragging={dragIdx === i}
@@ -51,7 +53,7 @@ export default function ShotRail({ board, selected, onSelect, onAddShot, onInser
               onDragEnd={() => { setDragIdx(null); setDropAt(null) }}
               onDragOverCard={(e) => { e.preventDefault(); setDropAt(i) }}
               onDrop={() => {
-                if (dragIdx !== null && dragIdx !== i) onReorder(dragIdx, i)
+                if (!disabled && dragIdx !== null && dragIdx !== i) onReorder(dragIdx, i)
                 setDragIdx(null); setDropAt(null)
               }}
               onDuplicate={() => onDuplicateShot(i)}
@@ -62,9 +64,10 @@ export default function ShotRail({ board, selected, onSelect, onAddShot, onInser
             />
           </div>
         ))}
-        <InsertLine testId={`insert-${board.shots.length}`} active={dropAt === board.shots.length} onClick={() => onInsertShot(board.shots.length)}
+        <InsertLine testId={`insert-${board.shots.length}`} active={dropAt === board.shots.length} onClick={() => { if (!disabled) onInsertShot(board.shots.length) }}
           onDragOver={(e) => { e.preventDefault(); setDropAt(board.shots.length) }} />
         <button
+          disabled={disabled}
           onClick={onAddShot}
           className="h-12 shrink-0 border border-dashed border-muted-foreground/50 text-muted-foreground hover:text-white hover:border-white text-[11px] transition-colors"
         >
@@ -72,7 +75,7 @@ export default function ShotRail({ board, selected, onSelect, onAddShot, onInser
         </button>
       </div>
       <div className="shrink-0 border-t border-border flex flex-col">
-        <button onClick={onRunAll} disabled={board.status === 'running'}
+        <button onClick={onRunAll} disabled={disabled || board.status === 'running'}
           className="h-8 text-[11px] uppercase tracking-[0.12em] hover:bg-white hover:text-black transition-colors disabled:opacity-40">
           ▶ {t('runAll')}
         </button>
@@ -80,7 +83,7 @@ export default function ShotRail({ board, selected, onSelect, onAddShot, onInser
           className="h-8 text-[11px] uppercase tracking-[0.12em] border-t border-border hover:bg-white hover:text-black transition-colors disabled:opacity-40">
           {sequencing ? `■ ${t('stopSequence')}` : `▶ ${t('sequencePreview')}`}
         </button>
-        <button onClick={onConcat} disabled={doneCount < 2 || board.status === 'running'}
+        <button onClick={onConcat} disabled={disabled || doneCount < 2 || board.status === 'running'}
           className="h-8 text-[11px] uppercase tracking-[0.12em] border-t border-border hover:bg-white hover:text-black transition-colors disabled:opacity-40">
           ⇢ {t('concat')} {doneCount}/{board.shots.length}
         </button>
@@ -100,6 +103,7 @@ function InsertLine({ active, onClick, onDragOver, testId }: { active: boolean; 
 
 interface CardProps {
   shot: Shot
+  disabled: boolean
   index: number
   active: boolean
   dragging: boolean
@@ -115,12 +119,12 @@ interface CardProps {
   duplicateTitle: string
 }
 
-function ShotCard({ shot, index, active, dragging, onClick, onDragStart, onDragEnd, onDragOverCard, onDrop, onDuplicate, onDelete, deleteLabel, confirmLabel, duplicateTitle }: CardProps) {
+function ShotCard({ shot, disabled, index, active, dragging, onClick, onDragStart, onDragEnd, onDragOverCard, onDrop, onDuplicate, onDelete, deleteLabel, confirmLabel, duplicateTitle }: CardProps) {
   const [confirming, setConfirming] = useState(false)
   return (
     <div
       data-testid={`shot-card-${index}`}
-      draggable
+      draggable={!disabled}
       onDragStart={onDragStart}
       onDragEnd={onDragEnd}
       onDragOver={onDragOverCard}
@@ -141,11 +145,12 @@ function ShotCard({ shot, index, active, dragging, onClick, onDragStart, onDragE
       </div>
       <div className="absolute top-0.5 left-1/2 -translate-x-1/2 text-[8px] text-white/40 opacity-0 group-hover:opacity-100 select-none">⋮⋮</div>
       <div className="absolute top-0.5 right-0.5 hidden group-hover:flex gap-0.5">
-        <button data-testid="shot-duplicate" title={duplicateTitle}
+        <button data-testid="shot-duplicate" title={duplicateTitle} disabled={disabled}
           onClick={(e) => { e.stopPropagation(); onDuplicate() }}
           className="w-5 h-5 text-[10px] bg-black/70 text-white border border-border hover:border-white">⧉</button>
         <button
           data-testid="shot-delete"
+          disabled={disabled}
           title={deleteLabel}
           onClick={(e) => {
             e.stopPropagation()

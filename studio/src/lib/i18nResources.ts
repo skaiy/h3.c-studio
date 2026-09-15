@@ -1,9 +1,32 @@
 import { zh, type Lang, type I18nKey } from './i18nData'
 
-// Re-derive the same shape as i18nData's private `Dict` without re-exporting it.
+export type StudioI18nKey = I18nKey
 type PartialDict = Partial<Record<I18nKey, string>>
 
 const en: PartialDict = {
+  saveFailed: 'Save failed; changes remain in this page',
+  retrySave: 'Retry save',
+  reloadBoard: 'Discard local changes and reload',
+  discardDraftConfirm: 'Discard unsaved changes to this board and reload the server version? This cannot be undone.',
+  operationFailed: 'Operation failed. Please try again.',
+  chainAutoHint: 'The first frame will inherit the previous shot’s last frame once that shot is complete.',
+  chainSkippedRefs: 'This shot uses reference images or audio, so automatic frame chaining is skipped.',
+  conditioningConflict: 'Reference images or audio cannot be combined with explicit first/last frames. Remove one set.',
+  audioNeedsImage: 'Reference audio needs at least one reference image; first/last frames do not count.',
+  tokenReductionAudioWarning: 'Experimental observation: token reduction with reference audio may reduce quality or fail. Generation is still allowed.',
+  promptImportedScene: 'Your original prompt is preserved in Scene without automatic parsing. Switching modes leaves it unchanged; editing a field rebuilds it.',
+  uploadFailed: 'Upload failed; the shot was not changed. Please try again.',
+  uploading: 'Uploading…',
+  promptFieldScene: 'Scene',
+  promptFieldAction: 'Action',
+  promptFieldCamera: 'Camera',
+  promptFieldLook: 'Look',
+  promptFieldAudio: 'Audio',
+  promptDefaultScene: 'a softly lit interior room',
+  promptDefaultAction: 'the subject moves naturally',
+  promptDefaultCamera: 'static medium shot',
+  promptDefaultLook: 'realistic, cinematic lighting',
+  promptDefaultAudio: 'ambient sound matching the scene',
   title: 'H3 STUDIO',
   subtitle: 'MINIMAX-H3 · NATIVE METAL',
   activeJobs: 'active jobs',
@@ -86,6 +109,29 @@ const en: PartialDict = {
 }
 
 const ja: PartialDict = {
+  saveFailed: '保存に失敗しました。変更はこのページ内に保持されています',
+  retrySave: '保存を再試行',
+  reloadBoard: 'ローカルの変更を破棄して再読み込み',
+  discardDraftConfirm: '未保存の変更を破棄してサーバー版を読み込みますか？元に戻せません。',
+  operationFailed: '操作に失敗しました。もう一度お試しください。',
+  chainAutoHint: '前のショットが完成すると、その末尾フレームを先頭フレームとして自動継承します。',
+  chainSkippedRefs: 'このショットには参照画像または音声があるため、フレームの自動継承をスキップします。',
+  conditioningConflict: '参照画像・音声は明示的な先頭／末尾フレームと併用できません。どちらかを削除してください。',
+  audioNeedsImage: '参照音声には参照画像が1枚以上必要です。先頭／末尾フレームでは代用できません。',
+  tokenReductionAudioWarning: '実験上の注意：TOKEN削減と参照音声の併用は、品質低下や失敗を招く可能性があります。生成は可能です。',
+  promptImportedScene: '元のプロンプトは自動解析せず「シーン」にそのまま保持します。モード切替では変更せず、項目の編集時に再構成します。',
+  uploadFailed: 'アップロードに失敗しました。ショットは変更されていません。再試行してください。',
+  uploading: 'アップロード中…',
+  promptFieldScene: 'シーン',
+  promptFieldAction: '動作',
+  promptFieldCamera: 'カメラ',
+  promptFieldLook: '表現',
+  promptFieldAudio: '音声',
+  promptDefaultScene: '柔らかな光の室内',
+  promptDefaultAction: '被写体が自然に動く',
+  promptDefaultCamera: '固定のミディアムショット',
+  promptDefaultLook: 'リアルで映画的な照明',
+  promptDefaultAudio: 'シーンに合った環境音',
   title: 'H3 STUDIO',
   subtitle: 'MINIMAX-H3 · NATIVE METAL',
   activeJobs: '件のアクティブジョブ',
@@ -168,6 +214,29 @@ const ja: PartialDict = {
 }
 
 const ko: PartialDict = {
+  saveFailed: '저장에 실패했지만 변경 사항은 이 페이지에 유지됩니다',
+  retrySave: '저장 다시 시도',
+  reloadBoard: '로컬 변경 사항 취소 후 새로고침',
+  discardDraftConfirm: '저장하지 않은 변경 사항을 버리고 서버 버전을 불러올까요? 되돌릴 수 없습니다.',
+  operationFailed: '작업에 실패했습니다. 다시 시도해 주세요.',
+  chainAutoHint: '이전 샷이 완료되면 마지막 프레임을 첫 프레임으로 자동 이어받습니다.',
+  chainSkippedRefs: '이 샷에는 참조 이미지 또는 오디오가 있어 프레임 자동 이어받기를 건너뜁니다.',
+  conditioningConflict: '참조 이미지나 오디오는 명시적인 첫/마지막 프레임과 함께 사용할 수 없습니다. 한쪽을 제거해 주세요.',
+  audioNeedsImage: '참조 오디오에는 참조 이미지가 하나 이상 필요합니다. 첫/마지막 프레임으로 대체할 수 없습니다.',
+  tokenReductionAudioWarning: '실험상 주의: TOKEN 절감과 참조 오디오를 함께 쓰면 품질이 낮아지거나 실패할 수 있습니다. 생성은 가능합니다.',
+  promptImportedScene: '원래 프롬프트를 자동 분석 없이 장면에 그대로 보관합니다. 모드 전환은 프롬프트를 바꾸지 않으며, 항목을 편집할 때 다시 조합합니다.',
+  uploadFailed: '업로드에 실패했습니다. 샷은 변경되지 않았습니다. 다시 시도해 주세요.',
+  uploading: '업로드 중…',
+  promptFieldScene: '장면',
+  promptFieldAction: '동작',
+  promptFieldCamera: '카메라',
+  promptFieldLook: '스타일',
+  promptFieldAudio: '오디오',
+  promptDefaultScene: '부드러운 조명의 실내',
+  promptDefaultAction: '피사체가 자연스럽게 움직임',
+  promptDefaultCamera: '고정 미디엄 샷',
+  promptDefaultLook: '사실적이고 영화 같은 조명',
+  promptDefaultAudio: '장면에 어울리는 환경음',
   title: 'H3 STUDIO',
   subtitle: 'MINIMAX-H3 · NATIVE METAL',
   activeJobs: '개의 활성 작업',
@@ -250,6 +319,29 @@ const ko: PartialDict = {
 }
 
 const de: PartialDict = {
+  saveFailed: 'Speichern fehlgeschlagen; Änderungen bleiben auf dieser Seite erhalten',
+  retrySave: 'Speichern wiederholen',
+  reloadBoard: 'Lokale Änderungen verwerfen und neu laden',
+  discardDraftConfirm: 'Ungespeicherte Änderungen verwerfen und die Serverversion laden? Dies kann nicht rückgängig gemacht werden.',
+  operationFailed: 'Vorgang fehlgeschlagen. Bitte erneut versuchen.',
+  chainAutoHint: 'Das erste Bild übernimmt automatisch das letzte Bild des vorherigen Shots, sobald dieser fertig ist.',
+  chainSkippedRefs: 'Dieser Shot verwendet Referenzbilder oder -audio; die automatische Bildverkettung wird übersprungen.',
+  conditioningConflict: 'Referenzbilder oder -audio können nicht mit expliziten ersten/letzten Bildern kombiniert werden. Eine Gruppe entfernen.',
+  audioNeedsImage: 'Referenz-Audio benötigt mindestens ein Referenzbild; erste/letzte Bilder zählen nicht.',
+  tokenReductionAudioWarning: 'Experimentelle Beobachtung: Token-Reduktion mit Referenz-Audio kann die Qualität senken oder fehlschlagen. Generieren bleibt möglich.',
+  promptImportedScene: 'Der ursprüngliche Prompt bleibt ohne automatische Zerlegung in „Szene“ erhalten. Ein Moduswechsel ändert ihn nicht; erst eine Feldänderung setzt ihn neu zusammen.',
+  uploadFailed: 'Upload fehlgeschlagen; der Shot wurde nicht geändert. Bitte erneut versuchen.',
+  uploading: 'Wird hochgeladen…',
+  promptFieldScene: 'Szene',
+  promptFieldAction: 'Aktion',
+  promptFieldCamera: 'Kamera',
+  promptFieldLook: 'Stil',
+  promptFieldAudio: 'Ton',
+  promptDefaultScene: 'ein sanft beleuchteter Innenraum',
+  promptDefaultAction: 'das Motiv bewegt sich natürlich',
+  promptDefaultCamera: 'statische Halbnahe',
+  promptDefaultLook: 'realistische, filmische Beleuchtung',
+  promptDefaultAudio: 'zur Szene passende Umgebungsgeräusche',
   title: 'H3 STUDIO',
   subtitle: 'MINIMAX-H3 · NATIVE METAL',
   activeJobs: 'aktive Jobs',
@@ -334,6 +426,6 @@ const de: PartialDict = {
 // Exported for the `npm run i18n:check` parity test — not meant for app runtime use elsewhere.
 export const resources: Record<Lang, PartialDict> = { zh, en, ja, ko, de }
 
-export function translate(lang: Lang, key: I18nKey): string {
+export function translate(lang: Lang, key: StudioI18nKey): string {
   return resources[lang]?.[key] ?? resources.en?.[key] ?? key
 }
