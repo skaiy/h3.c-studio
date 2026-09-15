@@ -105,6 +105,8 @@ def test_generate_includes_ref_audio_flag(app_env, client, monkeypatch):
     workflow) should be appended once per ordered ref_audio entry, resolved
     against the uploads dir just like --ref-image already is."""
     (app_env.UPLOADS / "song.mp3").write_bytes(b"fake-audio")
+    (app_env.UPLOADS / "singer.png").write_bytes(b"fake-image")
+    monkeypatch.setattr(app_env, "audio_duration", lambda path: 3.0)
     captured = []
     monkeypatch.setattr(
         app_env.subprocess, "Popen",
@@ -112,6 +114,7 @@ def test_generate_includes_ref_audio_flag(app_env, client, monkeypatch):
     )
     r = client.post("/api/generate", json={
         "prompt": "a singer performing on stage",
+        "ref_images": ["singer.png"],
         "ref_audio": ["song.mp3"],
     })
     job_id = r.json()["job_id"]

@@ -1,19 +1,22 @@
 #!/usr/bin/env python3
 """H3 Studio backend — wraps the h3-metal CLI with a job queue and progress API."""
 import json
+import math
 import os
 import re
+import struct
 import subprocess
 import threading
 import time
 import uuid
 from pathlib import Path
+from typing import Literal
 
 from fastapi import FastAPI, Request, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 ROOT = Path(__file__).resolve().parent.parent          # studio/
 # Engine directory: repo root by default (fork layout), overridable via env.
@@ -63,7 +66,11 @@ JOB_LOG_PERSIST_LIMIT = 200  # cap persisted log lines per job so jobs.json can'
 
 jobs: dict[str, dict] = {}
 queue: list[str] = []
-lock = threading.Lock()
+lock = threading.RLock()
+# A cancelled subprocess still owns the slot until its worker has reaped it.
+active_job_id: str | None = None
+ACTIVE = {"queued", "running"}
+TERMINAL = {"done", "error", "cancelled", "interrupted"}
 
 
 class GenRequest(BaseModel):
@@ -78,8 +85,8 @@ class GenRequest(BaseModel):
     seed: int = 42
     first_frame: str | None = None     # filename inside uploads/ or outputs/
     last_frame: str | None = None
-    ref_images: list[str] = []
-    ref_audio: list[str] = []        # ordered standalone Ref2VA audio clips (--ref-audio)
+    ref_images: list[str] = Field(default_factory=list)
+    ref_audio: list[str] = Field(default_factory=list)  # ordered --ref-audio clips
     token_reduction: bool = False
     turbo: bool = False              # use the folded Turbo-LoRA checkpoint (6-step distilled)
     checkpoint_after_step: int | None = None   # pause after N steps, save ckpt + sigma-zero draft
@@ -97,13 +104,20 @@ def save_jobs():
     run_job once a job finishes) — both are handled explicitly here. Logs are
     capped to the last JOB_LOG_PERSIST_LIMIT lines to keep the file bounded.
     """
-    serializable = {}
-    for job_id, job in jobs.items():
-        entry = {k: v for k, v in job.items() if k not in ("request", "proc")}
-        entry["request"] = job["request"].model_dump()
-        entry["log"] = entry.get("log", [])[-JOB_LOG_PERSIST_LIMIT:]
-        serializable[job_id] = entry
-    JOBS_FILE.write_text(json.dumps(serializable, ensure_ascii=False, indent=1))
+    with lock:
+        serializable = {}
+        for job_id, job in jobs.items():
+            entry = {k: v for k, v in job.items() if k not in ("request", "proc")}
+            entry["request"] = job["request"].model_dump()
+            entry["log"] = entry.get("log", [])[-JOB_LOG_PERSIST_LIMIT:]
+            serializable[job_id] = entry
+        atomic_json(JOBS_FILE, serializable)
+
+
+def atomic_json(path: Path, value: dict):
+    temporary = path.with_name(path.name + ".tmp")
+    temporary.write_text(json.dumps(value, ensure_ascii=False, indent=1))
+    temporary.replace(path)
 
 
 def load_jobs():
@@ -133,27 +147,119 @@ def load_jobs():
 jobs = load_jobs()
 
 
-def resolve_file(name: str) -> Path:
-    for base in (UPLOADS, OUTPUTS):
-        p = base / name
-        if p.exists():
+def resolve_file(name: str, *, outputs_only: bool = False) -> Path:
+    if not name or name in (".", "..") or any(c in name for c in ("/", "\\", "\0")):
+        raise HTTPException(400, "inputs must be local filenames, not paths or URLs")
+    for base in ((OUTPUTS,) if outputs_only else (UPLOADS, OUTPUTS)):
+        p = (base / name).resolve()
+        if p.parent != base.resolve():
+            raise HTTPException(400, "input resolves outside its media directory")
+        if p.is_file():
             return p
     raise HTTPException(404, f"file not found: {name}")
 
 
-def run_job(job_id: str):
-    job = jobs[job_id]
+def requested_frames(req: GenRequest) -> int:
+    if req.frames is not None:
+        return req.frames
+    if req.seconds is None:
+        return 56  # CLI default
+    if not math.isfinite(req.seconds) or not 0 < req.seconds <= 362 / 24:
+        raise HTTPException(400, "seconds must be positive and within 362 frames at 24 fps")
+    return math.floor(req.seconds * 24 + 0.5)  # C llround, not Python's ties-to-even
+
+
+def audio_duration(path: Path) -> float:
+    try:
+        probe = subprocess.run(
+            ["ffprobe", "-v", "error", "-select_streams", "a:0", "-show_entries",
+             "stream=codec_type,duration:format=duration", "-of", "json", str(path)],
+            capture_output=True, text=True, check=True, timeout=10)
+        data = json.loads(probe.stdout)
+        stream = data["streams"][0]
+        value = stream.get("duration")
+        if value in (None, "N/A"):
+            value = data.get("format", {}).get("duration")
+        duration = float(value)
+        if stream.get("codec_type") != "audio" or not math.isfinite(duration):
+            raise ValueError("missing audio duration")
+        return duration
+    except (OSError, subprocess.SubprocessError, ValueError, TypeError, KeyError, IndexError) as exc:
+        raise HTTPException(400, f"cannot probe reference audio: {path.name}") from exc
+
+
+def validate_checkpoint(name: str, req: GenRequest):
+    path = resolve_file(name, outputs_only=True)
+    try:
+        with path.open("rb") as stream:
+            header = stream.read(128)
+        if len(header) != 128 or header[:8] != b"H3CKPT1\n":
+            raise ValueError("unsupported header")
+        size, endian = struct.unpack_from("<II", header, 8)
+        seed = struct.unpack_from("<Q", header, 24)[0]
+        steps, next_step, width, height, frames = struct.unpack_from("<IIIII", header, 32)
+        video, audio = struct.unpack_from("<QQ", header, 56)
+        seconds = struct.unpack_from("<d", header, 72)[0]
+        aligned = 5 + ((requested_frames(req) - 5 + 16) // 17) * 17
+        if (size != 128 or endian != 0x01020304 or not 0 < next_step < steps
+                or (seed, steps, width, height, frames) !=
+                (req.seed, req.steps, req.width, req.height, aligned)
+                or not video or not audio or not math.isfinite(seconds) or seconds < 0
+                or path.stat().st_size != 128 + 4 * (video + audio)):
+            raise ValueError("incompatible metadata or truncated payload")
+    except (OSError, ValueError, struct.error) as exc:
+        raise HTTPException(400, f"invalid checkpoint: {name} ({exc})") from exc
+    # The engine verifies the full payload checksum and conditioning/model signature.
+
+
+def preflight(req: GenRequest) -> list[str]:
+    """Submission checks only: never attach these constraints to history models."""
+    if not req.prompt.strip():
+        raise HTTPException(400, "prompt is empty")
+    if any(v < 32 or v % 32 for v in (req.width, req.height)) or req.width * req.height > 768 * 1344:
+        raise HTTPException(400, "canvas must use multiples of 32 within 768*1344 pixels")
+    if not 6 <= requested_frames(req) <= 362:
+        raise HTTPException(400, "frames must align to a trained 22..362 frame chunk (requested 6..362)")
+    if not 2 <= req.steps <= 1000 or not 35 <= req.layers <= 50 or not 1 <= req.reuse <= 3:
+        raise HTTPException(400, "steps must be 2..1000, layers 35..50, reuse 1..3")
+    if not 0 <= req.seed < 2**64:
+        raise HTTPException(400, "seed must be an unsigned 64-bit integer")
+    if req.checkpoint_after_step is not None and not 0 <= req.checkpoint_after_step < req.steps:
+        raise HTTPException(400, "checkpoint_after_step must be zero or smaller than steps")
+    if (req.checkpoint_after_step or req.resume) and req.reuse != 1:
+        raise HTTPException(400, "progressive checkpoints require reuse=1")
+    if len(req.ref_images) > 9 or len(req.ref_audio) > 3:
+        raise HTTPException(400, "Ref2VA supports at most 9 images and 3 audio inputs")
+    if (req.ref_images or req.ref_audio) and (req.first_frame is not None or req.last_frame is not None):
+        raise HTTPException(400, "references cannot be combined with explicit frame anchors")
+    if req.ref_audio and not req.ref_images:
+        raise HTTPException(400, "reference audio requires an image reference")
+    for name in [req.first_frame, req.last_frame, *req.ref_images, *req.ref_audio]:
+        if name is not None:
+            resolve_file(name)
+    durations = [audio_duration(resolve_file(name)) for name in req.ref_audio]
+    if any(d < 2 or d > 15 for d in durations) or sum(durations) > 15:
+        raise HTTPException(400, "reference audio requires 2..15 seconds per clip and at most 15 seconds total")
+    if req.resume is not None:
+        validate_checkpoint(req.resume, req)
+    return (["token_reduction with reference audio is empirically unreliable; consider disabling it"]
+            if req.token_reduction and req.ref_audio else [])
+
+
+def job_command(job: dict) -> list[str]:
     req: GenRequest = job["request"]
+    job_id = job["id"]
     out_name = f"studio-{job_id[:8]}.mp4"
-    model_dir = H3_DIR / "MiniMax-H3-turbo" if req.turbo and (H3_DIR / "MiniMax-H3-turbo").exists() else MODEL_DIR
+    model_dir = job.get("model_dir") or (H3_DIR / "MiniMax-H3-turbo" if req.turbo and (H3_DIR / "MiniMax-H3-turbo").exists() else MODEL_DIR)
+    job["model_dir"] = str(model_dir)
     cmd = [str(H3_BIN), "--profile", "-d", str(model_dir), "-p", req.prompt,
            "--width", str(req.width), "--height", str(req.height),
            "--steps", str(req.steps), "--layers", str(req.layers),
            "--reuse", str(req.reuse), "--seed", str(req.seed),
            "-o", str(OUTPUTS / out_name)]
-    if req.frames:
+    if req.frames is not None:
         cmd += ["--frames", str(req.frames)]
-    elif req.seconds:
+    elif req.seconds is not None:
         cmd += ["--seconds", str(req.seconds)]
     if req.first_frame:
         cmd += ["--first-frame", str(resolve_file(req.first_frame))]
@@ -171,19 +277,82 @@ def run_job(job_id: str):
                 "--checkpoint", str(OUTPUTS / ckpt)]
         job["checkpoint"] = ckpt
     if req.resume:
-        cmd += ["--resume", str(resolve_file(req.resume))]
+        cmd += ["--resume", str(resolve_file(req.resume, outputs_only=True))]
+    return cmd
 
-    job.update(status="running", started=time.time(), cmd=cmd)
-    save_jobs()
-    proc = subprocess.Popen(cmd, cwd=H3_DIR, stdout=subprocess.PIPE,
-                            stderr=subprocess.STDOUT, text=True, bufsize=1)
-    job["proc"] = proc
-    buf = ""
+
+def stop_process(proc):
+    if proc.poll() is None:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=5)
+
+
+def persist_job_state(job: dict):
+    """A disk failure must not prevent cancellation, finalization, or queue advance."""
+    for persist in (lambda: writeback_job(job), save_jobs):
+        try:
+            persist()
+        except Exception as exc:                                  # noqa: BLE001
+            job["log"].append(f"backend persistence error: {exc}")
+
+
+def finish_job(job: dict, status: str, error: str | None = None):
+    """Caller holds lock. Terminal cancellation/interruption wins over completion."""
+    if job["status"] not in ("cancelled", "interrupted"):
+        job["status"] = status
+    if error:
+        job["log"].append(f"backend error: {error}")
+    job["finished"] = time.time()
+    job.pop("proc", None)
+    persist_job_state(job)
+
+
+def run_job(job_id: str):
+    global active_job_id
+    with lock:
+        job = jobs.get(job_id)
+        if job is None:
+            if active_job_id == job_id:
+                active_job_id = None
+            launch_next()
+            return
+    proc = None
+    status, error = "error", None
     try:
+        with lock:
+            if job["status"] not in ACTIVE:
+                return
+            assert_job_target(job)
+        req = job["request"]
+        preflight(req)  # queued files may have disappeared since submission
+        if job.get("chain_source"):
+            req = req.model_copy(update={"first_frame": extract_last_frame_of(job["chain_source"])})
+            preflight(req)
+            job["request"] = req  # persist the actual request, never mutate the shot
+        cmd = job_command(job)
+        with lock:
+            if job["status"] not in ACTIVE or jobs.get(job_id) is not job:
+                return
+            assert_job_target(job)
+            job.update(started=time.time(), cmd=cmd)
+            save_jobs()
+            proc = subprocess.Popen(cmd, cwd=H3_DIR, stdout=subprocess.PIPE,
+                                    stderr=subprocess.STDOUT, text=True, bufsize=1)
+            job["proc"] = proc
+        buf = ""
         while True:
+            if job["status"] in ("cancelled", "interrupted") or jobs.get(job_id) is not job:
+                break
             ch = proc.stdout.read(1)
             if ch == "" and proc.poll() is not None:
                 break
+            if ch == "":
+                time.sleep(0.01)
+                continue
             buf += ch
             if ch in "\r\n":
                 line = buf.strip()
@@ -195,34 +364,45 @@ def run_job(job_id: str):
                         job["phase"], job["done"], job["total"] = m.group(1), int(m.group(2)), int(m.group(3))
                     if "h3: wrote" in line:
                         job["output"] = line.split("h3: wrote")[-1].strip()
-        rc = proc.wait()
-        job["status"] = "done" if rc == 0 and job.get("output") else "error"
+        if job["status"] not in ("cancelled", "interrupted") and jobs.get(job_id) is job:
+            rc = proc.wait()
+            status = "done" if rc == 0 and job.get("output") else "error"
     except Exception as e:                                     # noqa: BLE001
-        job["status"] = "error"
-        job["log"].append(f"backend error: {e}")
-    job["finished"] = time.time()
-    job.pop("proc", None)
-    save_jobs()
-    if req.board_id and req.shot_id and req.board_id in boards:
-        b = boards[req.board_id]
-        for s in b["shots"]:
-            if s["id"] == req.shot_id:
-                s["status"] = job["status"]
-                if job["status"] == "done" and job.get("output"):
-                    s["output"] = Path(job["output"]).name
-                break
-        b["modifiedAt"] = time.time()
-        save_boards()
-    launch_next()
+        error = str(e)
+    finally:
+        if proc is not None:
+            try:
+                stop_process(proc)
+            except Exception as exc:                              # noqa: BLE001
+                error = error or f"process cleanup failed: {exc}"
+        with lock:
+            if jobs.get(job_id) is job:
+                finish_job(job, status, error)
+                if active_job_id == job_id:
+                    active_job_id = None
+        launch_next()
 
 
 def launch_next():
+    global active_job_id
     with lock:
-        running = any(j.get("status") == "running" for j in jobs.values())
-        if running or not queue:
+        if active_job_id is not None:
             return
-        nxt = queue.pop(0)
-    threading.Thread(target=run_job, args=(nxt,), daemon=True).start()
+        while queue:
+            nxt = queue.pop(0)
+            job = jobs.get(nxt)
+            if not job or job["status"] != "queued":
+                continue
+            active_job_id = nxt
+            job["status"] = "running"  # reserve before another caller can launch
+            try:
+                writeback_job(job)
+                save_jobs()
+                threading.Thread(target=run_job, args=(nxt,), daemon=True).start()
+                return
+            except Exception as exc:                              # noqa: BLE001
+                finish_job(job, "error", str(exc))
+                active_job_id = None
 
 
 # ---------------------------------------------------------------- routes
@@ -231,27 +411,30 @@ def launch_next():
 
 BOARDS_FILE = Path(os.environ.get("H3_BOARDS_FILE", ROOT / "storyboards.json"))
 boards: dict[str, dict] = {}
-if BOARDS_FILE.exists():
-    try:
-        boards = json.loads(BOARDS_FILE.read_text())
-        now0 = time.time()
-        for b in boards.values():
-            b.setdefault("createdAt", now0)
-            b.setdefault("modifiedAt", b.get("createdAt", now0))
-    except Exception:                                            # noqa: BLE001
-        boards = {}
 
 
 def save_boards():
-    BOARDS_FILE.write_text(json.dumps(boards, ensure_ascii=False, indent=1))
+    with lock:
+        atomic_json(BOARDS_FILE, boards)
+
+
+class PromptFields(BaseModel):
+    scene: str = ""
+    action: str = ""
+    camera: str = ""
+    look: str = ""
+    audio: str = ""
 
 
 class Shot(BaseModel):
     id: str
     prompt: str
+    prompt_mode: Literal["simple", "structured"] = "simple"
+    prompt_fields: PromptFields | None = None
     width: int = 512
     height: int = 512
-    seconds: float = 6
+    seconds: float | None = 6
+    frames: int | None = None
     steps: int = 20
     layers: int = 45
     reuse: int = 2
@@ -259,6 +442,10 @@ class Shot(BaseModel):
     turbo: bool = False
     first_frame: str | None = None
     last_frame: str | None = None
+    ref_images: list[str] = Field(default_factory=list)
+    ref_audio: list[str] = Field(default_factory=list)
+    token_reduction: bool = False
+    checkpoint_after_step: int | None = None
     status: str = "idle"          # idle / queued / running / done / error / skipped
     output: str | None = None
     job_id: str | None = None
@@ -268,64 +455,212 @@ class Board(BaseModel):
     id: str
     name: str = "未命名分镜"
     chain: bool = True            # auto last-frame -> next first-frame
-    shots: list[Shot] = []
+    shots: list[Shot] = Field(default_factory=list)
     status: str = "idle"          # idle / running / done / error
     result: str | None = None     # concatenated output name
     createdAt: float = 0.0
     modifiedAt: float = 0.0
 
 
+def load_boards() -> dict[str, dict]:
+    if not BOARDS_FILE.exists():
+        return {}
+    try:
+        restored = json.loads(BOARDS_FILE.read_text())
+        for board in restored.values():
+            defaults = Board(id=board["id"]).model_dump()
+            for key, value in defaults.items():
+                board.setdefault(key, value)
+            for shot in board["shots"]:
+                defaults = Shot(id=shot["id"], prompt="").model_dump()
+                for key, value in defaults.items():
+                    shot.setdefault(key, value)
+                if shot["prompt_fields"] is not None:
+                    shot["prompt_fields"] = {**PromptFields().model_dump(), **shot["prompt_fields"]}
+                shot.setdefault("_instance_id", uuid.uuid4().hex)
+                if shot["status"] in ACTIVE:
+                    shot["status"] = "interrupted"
+            if board["status"] in ACTIVE:
+                board["status"] = "interrupted"
+            board.pop("_run_id", None)
+        return restored
+    except (OSError, ValueError, KeyError, TypeError):
+        return {}
+
+
+boards = load_boards()
+
+
+def public_board(board: dict) -> dict:
+    # Defaults are applied on load, not strict generation validation.
+    return {**{k: v for k, v in board.items() if not k.startswith("_")},
+            "shots": [{k: v for k, v in shot.items() if not k.startswith("_")}
+                      for shot in board["shots"]]}
+
+
+def target_shot(req: GenRequest) -> tuple[dict, dict] | None:
+    if req.board_id is None and req.shot_id is None:
+        return None
+    if not req.board_id or not req.shot_id:
+        raise HTTPException(400, "board_id and shot_id must be supplied together")
+    board = boards.get(req.board_id)
+    matches = [s for s in board["shots"] if s["id"] == req.shot_id] if board else []
+    if not matches:
+        raise HTTPException(404, "original target board or shot no longer exists")
+    if len(matches) != 1:
+        raise HTTPException(409, "ambiguous target: duplicate shot IDs")
+    return board, matches[0]
+
+
+def target_identity(board: dict, shot: dict) -> dict:
+    return {"board_created": board["createdAt"], "shot_instance": shot["_instance_id"]}
+
+
+def assert_job_target(job: dict):
+    target = target_shot(job["request"])
+    if target is not None:
+        board, shot = target
+        if job.get("target") != target_identity(board, shot) or shot.get("job_id") != job["id"]:
+            raise HTTPException(409, "original target was replaced or belongs to another job")
+    return target
+
+
+def board_busy(board: dict) -> bool:
+    return bool(board.get("_run_id")) or board["status"] == "running" or any(
+        j["request"].board_id == board["id"] and
+        (j["status"] in ACTIVE or j["id"] == active_job_id) for j in jobs.values())
+
+
+def require_idle(board: dict):
+    if board_busy(board):
+        raise HTTPException(409, "board has active generation; reload after it finishes")
+
+
+def writeback_job(job: dict):
+    try:
+        target = assert_job_target(job)
+    except HTTPException:
+        return  # Never resurrect a deleted target or overwrite a newer job.
+    if target is None:
+        return
+    board, shot = target
+    shot["status"] = job["status"]
+    if job["status"] == "done" and job.get("output"):
+        shot["output"] = Path(job["output"]).name
+    if not board.get("_run_id"):
+        board["status"] = ("running" if job["status"] in ACTIVE else
+                           "done" if job["status"] == "done" else "error")
+    board["modifiedAt"] = time.time()
+    save_boards()
+
+
+def shot_request(board: dict, shot: dict) -> GenRequest:
+    """The saved prompt is authoritative; structured fields are editor metadata."""
+    values = {key: shot[key] for key in GenRequest.model_fields if key in shot}
+    index = next(i for i, item in enumerate(board["shots"]) if item is shot)
+    return GenRequest(**values, board_id=board["id"], shot_id=shot["id"],
+                      label=f"[{board['name']}] 镜头 {index + 1}")
+
+
+def chain_source(board: dict, req: GenRequest, previous_output: str | None) -> str | None:
+    if board["chain"] and not req.first_frame and not req.ref_images and not req.ref_audio:
+        return previous_output
+    return None
+
+
+def enqueue_job(req: GenRequest, *, source: str | None = None, model_dir: str | None = None) -> dict:
+    """Caller holds lock and has checked target ownership/board reservation."""
+    warnings = preflight(req)
+    if source:
+        resolve_file(source, outputs_only=True)
+    target = target_shot(req)
+    job_id = uuid.uuid4().hex[:12]
+    job = {"id": job_id, "request": req.model_copy(deep=True), "status": "queued",
+           "created": time.time(), "log": [f"warning: {w}" for w in warnings],
+           "phase": None, "done": 0, "total": 0, "label": req.label or req.prompt[:40],
+           "warnings": warnings, "chain_source": source}
+    if model_dir:
+        job["model_dir"] = model_dir
+    if target:
+        board, shot = target
+        job["target"] = target_identity(board, shot)
+        # A failed retry must not remove the last usable clip from this shot.
+        shot.update(status="queued", job_id=job_id)
+        board["status"] = "running"
+        board["result"] = None
+        board["modifiedAt"] = time.time()
+    jobs[job_id] = job
+    try:
+        save_jobs()
+        if target:
+            save_boards()
+    except Exception as exc:
+        finish_job(job, "error", str(exc))
+        raise HTTPException(500, "cannot persist submitted job") from exc
+    queue.append(job_id)
+    return {"job_id": job_id, **({"warnings": warnings} if warnings else {})}
+
+
 def extract_last_frame_of(video_name: str) -> str:
-    src = OUTPUTS / video_name
-    out = UPLOADS / f"chain-{int(time.time())}-{Path(video_name).stem}.png"
+    src = resolve_file(video_name, outputs_only=True)
+    out = UPLOADS / f"chain-{uuid.uuid4().hex}.png"
     subprocess.run(["ffmpeg", "-y", "-v", "error", "-sseof", "-0.05",
                     "-i", str(src), "-vframes", "1", str(out)],
-                   capture_output=True, check=True)
+                   capture_output=True, check=True, timeout=30)
+    if not out.is_file():
+        raise RuntimeError("chain frame extraction produced no image")
     return out.name
 
 
-def board_run_worker(board_id: str):
-    board = boards[board_id]
-    prev_output = None
-    for idx, shot in enumerate(board["shots"]):
-        if not shot["prompt"].strip():
-            shot["status"] = "skipped"
-            save_boards()
-            continue
-        if board["chain"] and prev_output:
-            shot["first_frame"] = extract_last_frame_of(prev_output)
-        req = GenRequest(prompt=shot["prompt"], width=shot["width"], height=shot["height"],
-                         seconds=shot["seconds"], steps=shot["steps"], layers=shot["layers"],
-                         reuse=shot["reuse"], seed=shot["seed"], turbo=shot.get("turbo", False),
-                         first_frame=shot.get("first_frame"), last_frame=shot.get("last_frame"),
-                         label=f"[{board['name']}] 镜头 {idx + 1}")
-        job_id = uuid.uuid4().hex[:12]
-        jobs[job_id] = {"id": job_id, "request": req, "status": "queued",
-                        "created": time.time(), "log": [], "phase": None,
-                        "done": 0, "total": 0, "label": req.label}
-        save_jobs()
-        shot.update(status="queued", job_id=job_id)
-        save_boards()
-        queue.append(job_id)
+def board_run_worker(board_id: str, run_id: str):
+    board = boards.get(board_id)
+    shot = None
+    try:
+        prev_output = None
+        for shot in board["shots"]:
+            with lock:
+                if boards.get(board_id) is not board or board.get("_run_id") != run_id:
+                    return
+                if not shot["prompt"].strip():
+                    shot["status"] = "skipped"
+                    save_boards()
+                    continue
+                req = shot_request(board, shot)
+                result = enqueue_job(req, source=chain_source(board, req, prev_output))
+                job_id = result["job_id"]
+            launch_next()
+            while True:
+                with lock:
+                    if boards.get(board_id) is not board or board.get("_run_id") != run_id:
+                        return
+                    job = jobs.get(job_id)
+                    if job is None or job["status"] in TERMINAL:
+                        break
+                time.sleep(0.05)
+            if job is None or job["status"] != "done":
+                raise RuntimeError(f"shot generation {job['status'] if job else 'interrupted'}")
+            prev_output = Path(job["output"]).name
+        with lock:
+            if boards.get(board_id) is board and board.get("_run_id") == run_id:
+                board["status"] = "done"
+    except Exception as exc:                                      # noqa: BLE001
+        with lock:
+            if board is not None and boards.get(board_id) is board and board.get("_run_id") == run_id:
+                board["status"] = "error"
+                board["error"] = str(exc)
+                if shot is not None and shot["status"] not in TERMINAL:
+                    shot["status"] = "error"
+    finally:
+        with lock:
+            if board is not None and boards.get(board_id) is board and board.get("_run_id") == run_id:
+                board.pop("_run_id", None)
+                board["modifiedAt"] = time.time()
+                try:
+                    save_boards()
+                except Exception as exc:                          # noqa: BLE001
+                    board["status"] = "error"
+                    board["error"] = f"cannot persist board: {exc}"
         launch_next()
-        # wait for this shot to finish before chaining the next
-        while True:
-            time.sleep(3)
-            st = jobs[job_id]["status"]
-            shot["status"] = "running" if st == "running" else st
-            if st in ("done", "error", "cancelled"):
-                break
-        if jobs[job_id]["status"] != "done":
-            shot["status"] = jobs[job_id]["status"]
-            board["status"] = "error"
-            save_boards()
-            return
-        prev_output = jobs[job_id].get("output")
-        prev_output = Path(prev_output).name if prev_output else None
-        shot.update(status="done", output=prev_output)
-        save_boards()
-    board["status"] = "done"
-    save_boards()
 
 
 @app.get("/api/boards")
@@ -335,89 +670,147 @@ def list_boards():
         out.append({"id": b["id"], "name": b["name"], "status": b["status"],
                     "result": b.get("result"), "shotCount": len(b["shots"]),
                     "doneCount": sum(1 for s in b["shots"] if s["status"] == "done"),
-                    "duration": round(sum(s.get("seconds", 0) for s in b["shots"]), 1),
+                    "duration": round(sum(s.get("seconds") or 0 for s in b["shots"]), 1),
                     "createdAt": b.get("createdAt", 0), "modifiedAt": b.get("modifiedAt", 0)})
     return out
 
 
 @app.get("/api/boards/{board_id}")
 def get_board(board_id: str):
-    if board_id not in boards:
-        raise HTTPException(404)
-    return boards[board_id]
+    with lock:
+        if board_id not in boards:
+            raise HTTPException(404)
+        return public_board(boards[board_id])
 
 
 @app.post("/api/boards")
 def upsert_board(board: Board):
-    now = time.time()
-    if not board.id:
-        board.id = uuid.uuid4().hex[:8]
-        board.createdAt = now
-        if not board.shots:
-            board.shots = [Shot(id="s" + uuid.uuid4().hex[:6], prompt="")]
-    board.modifiedAt = now
-    if board.id in boards and not board.createdAt:
-        board.createdAt = boards[board.id].get("createdAt", now)
-    boards[board.id] = board.model_dump()
-    save_boards()
-    return boards[board.id]
+    with lock:
+        previous = boards.get(board.id)
+        if previous:
+            require_idle(previous)
+            if board.modifiedAt != previous["modifiedAt"]:
+                raise HTTPException(409, "stale board revision; reload before saving")
+        if len({s.id for s in board.shots}) != len(board.shots) or any(not s.id for s in board.shots):
+            raise HTTPException(400, "shot IDs must be nonempty and unique")
+        now = time.time()
+        if not board.id:
+            board.id = uuid.uuid4().hex[:8]
+            if not board.shots:
+                board.shots = [Shot(id="s" + uuid.uuid4().hex[:6], prompt="")]
+        board.createdAt = previous["createdAt"] if previous else now
+        board.modifiedAt = now
+        updated = board.model_dump()
+        if previous:
+            # Status/output/job ownership belong to the backend, not autosave.
+            updated["status"], updated["result"] = previous["status"], previous.get("result")
+        prior_shots = {s["id"]: s for s in previous["shots"]} if previous else {}
+        for shot in updated["shots"]:
+            prior = prior_shots.get(shot["id"])
+            shot["_instance_id"] = prior["_instance_id"] if prior else uuid.uuid4().hex
+            if prior:
+                for field in ("status", "output", "job_id"):
+                    shot[field] = prior.get(field)
+            elif previous:
+                shot.update(status="idle", output=None, job_id=None)
+        boards[board.id] = updated
+        save_boards()
+        return public_board(updated)
 
 
 @app.post("/api/boards/{board_id}/duplicate")
 def duplicate_board(board_id: str):
-    src = boards.get(board_id)
-    if not src:
-        raise HTTPException(404)
-    now = time.time()
-    copy = json.loads(json.dumps(src))
-    copy["id"] = uuid.uuid4().hex[:8]
-    copy["name"] = src["name"] + " 副本"
-    copy["status"] = "idle"
-    copy["result"] = None
-    copy["createdAt"] = copy["modifiedAt"] = now
-    for s in copy["shots"]:
-        s["id"] = "s" + uuid.uuid4().hex[:6]
-        s["status"] = "idle"
-        s["output"] = None
-        s["job_id"] = None
-    boards[copy["id"]] = copy
-    save_boards()
-    return copy
+    with lock:
+        src = boards.get(board_id)
+        if not src:
+            raise HTTPException(404)
+        now = time.time()
+        copy = json.loads(json.dumps(public_board(src)))
+        copy.pop("error", None)
+        copy["id"] = uuid.uuid4().hex[:8]
+        copy["name"] = src["name"] + " 副本"
+        copy["status"] = "idle"
+        copy["result"] = None
+        copy["createdAt"] = copy["modifiedAt"] = now
+        for s in copy["shots"]:
+            s["id"] = "s" + uuid.uuid4().hex[:6]
+            s["_instance_id"] = uuid.uuid4().hex
+            s["status"] = "idle"
+            s["output"] = None
+            s["job_id"] = None
+        boards[copy["id"]] = copy
+        save_boards()
+        return public_board(copy)
 
 
 @app.delete("/api/boards/{board_id}")
 def delete_board(board_id: str):
-    boards.pop(board_id, None)
-    save_boards()
+    with lock:
+        if board_id in boards:
+            require_idle(boards[board_id])
+        boards.pop(board_id, None)
+        save_boards()
     return {"ok": True}
 
 
 @app.post("/api/boards/{board_id}/run")
 def run_board(board_id: str):
-    board = boards.get(board_id)
-    if not board:
-        raise HTTPException(404)
-    if board["status"] == "running":
-        raise HTTPException(409, "board already running")
-    if not board["shots"]:
-        raise HTTPException(400, "no shots")
-    board["status"] = "running"
-    board["result"] = None
-    board["modifiedAt"] = time.time()
-    for s in board["shots"]:
-        if s["status"] != "done":
-            s.update(status="idle", output=None)
-    save_boards()
-    threading.Thread(target=board_run_worker, args=(board_id,), daemon=True).start()
-    return {"ok": True}
+    with lock:
+        board = boards.get(board_id)
+        if not board:
+            raise HTTPException(404)
+        require_idle(board)
+        if len({s["id"] for s in board["shots"]}) != len(board["shots"]):
+            raise HTTPException(400, "shot IDs must be unique")
+        if not any(s["prompt"].strip() for s in board["shots"]):
+            raise HTTPException(400, "no shots with a nonempty prompt")
+        warnings = []
+        # Validate the entire board before changing state or starting any job.
+        for shot in board["shots"]:
+            if shot["prompt"].strip():
+                try:
+                    warnings.extend(preflight(shot_request(board, shot)))
+                except HTTPException as exc:
+                    raise HTTPException(exc.status_code, f"shot {shot['id']}: {exc.detail}") from exc
+        run_id = uuid.uuid4().hex
+        board.update(status="running", result=None, modifiedAt=time.time(), _run_id=run_id)
+        board.pop("error", None)
+        for shot in board["shots"]:
+            shot.update(status="idle", job_id=None)
+        try:
+            save_boards()
+            threading.Thread(target=board_run_worker, args=(board_id, run_id), daemon=True).start()
+        except Exception as exc:
+            board.pop("_run_id", None)
+            board.update(status="error", error=str(exc))
+            save_boards()
+            raise HTTPException(500, "cannot start board worker") from exc
+        return {"ok": True, **({"warnings": list(dict.fromkeys(warnings))} if warnings else {})}
+
+
+@app.post("/api/boards/{board_id}/shots/{shot_id}/generate")
+def generate_shot(board_id: str, shot_id: str):
+    with lock:
+        board, shot = target_shot(GenRequest(prompt="", board_id=board_id, shot_id=shot_id))
+        require_idle(board)
+        req = shot_request(board, shot)
+        index = board["shots"].index(shot)
+        previous = next((s for s in reversed(board["shots"][:index]) if s["prompt"].strip()), None)
+        source = chain_source(board, req, previous.get("output") if previous else None)
+        result = enqueue_job(req, source=source)
+    launch_next()
+    return result
 
 
 @app.post("/api/boards/{board_id}/concat")
 def concat_board(board_id: str):
-    board = boards.get(board_id)
-    if not board:
-        raise HTTPException(404)
-    outputs = [s["output"] for s in board["shots"] if s.get("output")]
+    with lock:
+        board = boards.get(board_id)
+        if not board:
+            raise HTTPException(404)
+        require_idle(board)
+        revision = board["modifiedAt"]
+        outputs = [s["output"] for s in board["shots"] if s.get("output")]
     if len(outputs) < 2:
         raise HTTPException(400, "need at least 2 finished shots")
     list_file = UPLOADS / f"concat-{board_id}.txt"
@@ -429,9 +822,13 @@ def concat_board(board_id: str):
     list_file.unlink(missing_ok=True)
     if r.returncode != 0:
         raise HTTPException(500, r.stderr[-300:])
-    board["result"] = out_name
-    board["modifiedAt"] = time.time()
-    save_boards()
+    with lock:
+        if boards.get(board_id) is not board or board["modifiedAt"] != revision:
+            raise HTTPException(409, "board changed during concatenation; result was not attached")
+        require_idle(board)
+        board["result"] = out_name
+        board["modifiedAt"] = time.time()
+        save_boards()
     return {"output": out_name}
 
 
@@ -444,7 +841,7 @@ def info():
 
 @app.post("/api/upload")
 async def upload(file: UploadFile = File(...)):
-    name = f"{int(time.time())}-{Path(file.filename).name}"
+    name = f"{uuid.uuid4().hex}-{Path(file.filename or 'upload').name}"
     (UPLOADS / name).write_bytes(await file.read())
     return {"name": name}
 
@@ -457,42 +854,79 @@ def list_uploads():
 
 @app.post("/api/generate")
 def generate(req: GenRequest):
-    if not req.prompt.strip():
-        raise HTTPException(400, "prompt is empty")
-    job_id = uuid.uuid4().hex[:12]
-    jobs[job_id] = {"id": job_id, "request": req, "status": "queued",
-                    "created": time.time(), "log": [], "phase": None,
-                    "done": 0, "total": 0, "label": req.label or req.prompt[:40]}
-    save_jobs()
-    queue.append(job_id)
+    with lock:
+        target = target_shot(req)
+        if target:
+            require_idle(target[0])
+        result = enqueue_job(req)
     launch_next()
-    return {"job_id": job_id}
+    return result
+
+
+@app.post("/api/jobs/{job_id}/resume")
+def resume_job(job_id: str):
+    with lock:
+        original = jobs.get(job_id)
+        if original is None:
+            raise HTTPException(404, "job not found")
+        if original["status"] not in TERMINAL or active_job_id == job_id:
+            raise HTTPException(409, "original job is still active")
+        checkpoint = original.get("checkpoint")
+        if not checkpoint:
+            raise HTTPException(400, "original job has no checkpoint")
+        req = original["request"].model_copy(deep=True, update={
+            "checkpoint_after_step": None, "resume": checkpoint})
+        if not req.board_id or not req.shot_id:
+            raise HTTPException(400, "original request is missing its board/shot target; cannot retarget")
+        board, shot = target_shot(req)
+        require_idle(board)
+        # Legacy jobs have no identity token: require their persisted job link.
+        if ((original.get("target") is not None and original["target"] != target_identity(board, shot))
+                or shot.get("job_id") != job_id):
+            raise HTTPException(409, "original target was replaced or has a newer job")
+        result = enqueue_job(req, model_dir=original.get("model_dir"))
+    launch_next()
+    return result
 
 
 @app.get("/api/jobs")
 def list_jobs():
-    return [public_job(j) for j in sorted(jobs.values(), key=lambda j: j["created"], reverse=True)]
+    with lock:
+        return [public_job(j) for j in sorted(jobs.values(), key=lambda j: j["created"], reverse=True)]
 
 
 @app.get("/api/jobs/{job_id}")
 def get_job(job_id: str):
-    if job_id not in jobs:
-        raise HTTPException(404)
-    return {**public_job(jobs[job_id]), "log": jobs[job_id]["log"][-80:]}
+    with lock:
+        if job_id not in jobs:
+            raise HTTPException(404)
+        return {**public_job(jobs[job_id]), "log": jobs[job_id]["log"][-80:]}
 
 
 @app.delete("/api/jobs/{job_id}")
 def cancel_job(job_id: str):
-    job = jobs.get(job_id)
-    if not job:
-        raise HTTPException(404)
-    proc = job.get("proc")
-    if proc and proc.poll() is None:
-        proc.terminate()
-    if job["status"] == "queued" and job_id in queue:
-        queue.remove(job_id)
-    job["status"] = "cancelled"
-    save_jobs()
+    with lock:
+        job = jobs.get(job_id)
+        if not job:
+            raise HTTPException(404)
+        if job["status"] not in ACTIVE:
+            return {"ok": True}
+        proc = job.get("proc")
+        if job_id in queue:
+            queue.remove(job_id)
+        job["status"] = "cancelled"
+        if job_id != active_job_id:
+            finish_job(job, "cancelled")
+        else:
+            persist_job_state(job)
+    if proc is not None:
+        try:
+            # Also handles a child ignoring SIGTERM while its worker blocks on stdout.
+            stop_process(proc)
+        except Exception as exc:                                  # noqa: BLE001
+            with lock:
+                job["log"].append(f"backend cancellation error: {exc}")
+    launch_next()
     return {"ok": True}
 
 
@@ -503,6 +937,7 @@ def public_job(j: dict) -> dict:
             "created": j["created"], "started": j.get("started"),
             "finished": j.get("finished"), "output": j.get("output"),
             "checkpoint": j.get("checkpoint"),
+            **({"warnings": j["warnings"]} if j.get("warnings") else {}),
             "params": req.model_dump(exclude={"prompt"})}
 
 

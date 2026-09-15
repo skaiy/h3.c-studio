@@ -1,0 +1,99 @@
+# 本地个人视频工作流 / Local personal video workflow
+
+2026-09-15 · 用户已确认方向：本机、个人项目、先可靠生成，再复用与轻量剪辑。
+
+**Status:** #7 is implemented in this branch, pending review/merge; #8–#11 are planned, not delivered. The contracts and acceptance gates below do not imply released APIs or verified generation quality. GitHub tracks current merge status.
+
+## 路线图与 PR 依赖 / Roadmap & dependencies
+
+| Issue | 状态 | 范围与 PR 拆分 | 前置依赖 |
+|---|---|---|---|
+| [#7 · P0](https://github.com/skaiy/h3.c-studio/issues/7) | 本分支实现，待评审/合并 | 一个完整修复 PR：输入/结构化提示词持久化、单条/批量共用请求构建与预检、按原任务安全续跑 | 当前可靠性基础；不含 take 选择 |
+| [#8 · Local takes](https://github.com/skaiy/h3.c-studio/issues/8) | 规划中 | A：后端 take schema、旧数据迁移与选择 API；B：比较/采用 UI、下游连续性警告 | #7 合并；B 等 A 合并 |
+| [#9 · Local reference sets](https://github.com/skaiy/h3.c-studio/issues/9) | 规划中 | A：本地 assets/参考集 API；B：项目内管理与选择器 UI | #7 合并；B 等 A 合并；与 #8 对齐快照语义 |
+| [#10 · Lightweight edit/export](https://github.com/skaiy/h3.c-studio/issues/10) | 规划中 | A：edit manifest、后端导出与 fixture 测试；B：最小 trim/配乐 UI | #7、#8 的选定 take 语义合并；B 等 A 合并 |
+| [#11 · Song Storyboard](https://github.com/skaiy/h3.c-studio/issues/11) | 规划中，仅可行性实验 | 小型离线切段/对齐原型，记录实验结果后再决定产品 UI | 先 #7；产品化前需 #9 参考集与 #10 基础导出契约 |
+
+- #7 是共同前置；#8 与 #9 不必人为串行，但涉及共享数据契约时先明确依赖，避免重复实现。
+- 分支遵循用户确认的 `fix/<issue>-slug` / `feat/<issue>-slug`；**所有 PR 只到 `main`**。
+- 依赖 PR 必须先合并，再从更新的 `main` 开发并提交下游代码 PR，避免重复 diff；不提交堆叠的依赖代码 PR。
+- CI 与 review 通过后由人类维护者合并，agent 不合并。具体贡献流程见 [CONTRIBUTING](../CONTRIBUTING.md)。
+
+## 目标与边界 / Scope
+
+目标闭环：保存镜头输入 → 可靠生成/续跑 → 比较并采用本地 take → 复用参考集 → 非破坏性剪辑/配乐 → 可追溯导出。
+
+先做个人项目内复用，不做云账号、协作、全球素材平台、模型训练或完整多轨 NLE。参考集不保证身份/口型一致；本地 take 比较不是模型级 Retake。保持原引擎边界，不以路线图承诺无缝长视频。
+
+## 数据契约 / Data contracts
+
+以下是跨 PR 的设计约束；#8–#10 字段是**规划契约**，不能视为当前已存在的 schema。
+
+### #7：镜头输入与原任务续跑
+
+- 保存镜头的最终 prompt、`prompt_mode`、五个 `prompt_fields`、有序 `ref_images`/`ref_audio`、首尾帧及支持的生成选项（含 seed、frames、token reduction、checkpoint）。结构化字段是编辑元数据，最终 prompt 是生成依据。
+- 单条与批量从已保存镜头走同一个后端请求构建器和 preflight；排队时固定请求，执行前复查文件。Ref2VA 跳过自动 FL2VA 末帧接力并提示；显式首尾帧与参考输入冲突时在排队前拒绝，不静默清空素材。
+- 续跑只使用原 job 的请求快照、checkpoint 和原 board/shot 身份，不读取当前 UI 选中镜头的参数。原目标缺失、被替换或已归属其他任务时拒绝回写，不重定向到别的镜头。
+- 旧 board 保持可读；无结构化字段时保留原 prompt，不猜测拆分。保存失败必须可见，切镜头/切板/轮询不能覆盖未保存编辑。
+
+### #8：不可变 take 与选择
+
+- 成功 take 保存不可变的 `id`、`shot_id`、`job_id`、`output`、`created_at` 和原始请求快照：prompt、条件输入、seed，以及可取得的引擎/模型元数据。后续修改镜头输入不能改写历史快照。
+- `selected_take_id` 是镜头当前采用版本的唯一依据：预览、连续播放、拼接/导出、下游接力均使用它。迁移期间 `shot.output` 仅作兼容投影，不作为另一份独立选择状态。
+- 接力生成记录 `source_take_id`，指向真正提供首帧的上游 take，不能只记录可复用的文件名。上游选择变更使相关下游镜头标记 stale 并提示；不自动重生成、不自动消耗 GPU。
+- 旧 output 导入为一个 legacy take；无法从历史记录确认的参数/来源明确标为 unknown，不拿当前镜头参数补写，不伪造可复现性。无接力来源与“历史来源未知”必须可区分。
+- 失败/中断属于 job 历史，不冒充成功 take。失败重试保留旧 take 和选择；选择操作不能排队生成，运行中任务完成也不能静默覆盖用户选择。
+- 复制 board/shot 时明确新身份与 take/来源映射；丢失媒体进入缺失/修复状态，不暗中采用其他 take。删除涉及引用时必须有显式处理策略，不能连带删除个人源素材。
+
+### #9：本地 assets 与参考集快照
+
+- Asset 使用稳定 ID、受管理的本地文件名、媒体类型、可取得的大小/时长。可移植 manifest 不写绝对路径；校验路径，媒体探测限时。
+- Reference set 保存 `id`、名称、kind、**有序**图像/音频 asset IDs、可选 notes 与 revision。
+- 应用参考集时复制明确的素材引用快照并记录来源集 ID/revision，**不是 live alias**。编辑参考集不能改变已应用镜头、排队请求或历史 take；更新需显式重新应用。
+- 历史请求保留稳定素材引用；替换素材应产生新身份，不能用同一别名悄悄指向新文件。缺失媒体提供 repair/relink 状态，不自动删除仍被引用的文件。
+- 应用前展示 Ref2VA/FL2VA 冲突；不静默清空用户原条件输入，不上传外部服务。
+
+### #10：edit manifest 与固定 take 的导出
+
+- 非破坏性 edit manifest 保存有序 cut list、每段 take 引用及 in/out、片段原声音量/静音、一个连续项目配乐及其对齐信息；保存/重启保留编辑意图，原视频/音频不变。
+- 预览与导出消费同一 manifest 语义；开始导出时创建不可变快照，固定选定的 take IDs、素材引用、剪切点、音频与输出设置。中途换选择不能改变正在导出的内容。
+- 镜头选择或编辑变更使旧导出结果标记过期，不能把旧拼接结果当成当前预览。缺失 take/素材、越界剪切和不兼容设置在长任务开始前报错。
+- 探测实际 streams/时长：仅兼容的流允许 stream-copy；精确剪切、混音或重排格式需明确报告重编码路径，不一概承诺无损。
+- FFmpeg 导出作为可取消 job，具有一致的进度与终态错误，不覆盖源文件。Manifest/EDL + 素材交给外部 NLE 可后续考虑，不属于首个剪辑 PR。
+
+## 验收门槛 / Acceptance gates
+
+这些是合并前必须提供的证据，不是已通过声明。默认使用隔离临时数据、mock subprocess 和小型媒体 fixture，不触碰个人项目。
+
+| 工作项 | 最小验收证据 |
+|---|---|
+| #7 | 保存 → 读取 → 复制 → 后端重启保留输入；切镜头/模式与轮询不丢编辑；单条/批量请求与预检一致；引用/接力冲突可见；续跑保留原请求且不误写目标；缺失文件/准备失败进入终态、不阻塞队列 |
+| #8 | 两次生成后采用旧 take，重载/重启仍用同一版本预览与导出；失败重试保留旧片；上游切换产生下游警告且不生成；运行中选择不被覆盖；覆盖复制、缺失/删除媒体 |
+| #9 | 多镜头应用同一有序参考集，保存/复制/重启不丢引用；修改参考集不变更已应用/排队/历史请求；冲突提示、路径校验和限时探测有测试 |
+| #10 | 三段 fixture 经 trim/重排/配乐后，用 ffprobe + 媒体测试核对顺序、时长、音频；预览/导出一致；保存重启、过期结果、缺失媒体、取消/失败和原件不变有覆盖 |
+| #11 | 无 GPU 的切段/对齐测试先通过；真实实验另获许可，报告可追溯结果与失败案例后才决定产品化 |
+
+- 前端/API 回归必须覆盖用户请求生命周期，不只测试 CLI flag。涉及 UI 的改动覆盖 zh/en/ja/ko/de 五语言。
+- 在 `studio/` 运行 `npm test`、`npm run lint`、`npm run i18n:check`、`npm run build`；后端在 `studio/server/` 运行 `.venv/bin/pytest -v`（安装见贡献指南）。PR 记录实际命令、退出码、结果及未验证部分；失败不能写成通过。
+- 引擎硬约束以实际源码为准：参考数量、音频规则、Ref2VA/FL2VA 互斥；音频用限时 ffprobe 检查。社区对 token reduction + 音频的经验警告应与硬性拒绝规则区分。
+- **未经单独明确 opt-in，不运行真实 GPU 生成、模型下载或昂贵长任务。** 新外部依赖须另获批准；不自动云上传、不暴露凭据。
+
+## #11：有界 Song Storyboard 实验
+
+1. 使用用户拥有/获授权的 30–45 秒音频，手工或固定时长切成符合引擎约束的片段；先做离线切段/对齐原型。
+2. 获得真实 GPU 实验许可后，仅生成 3–4 段：相同有序参考图、不同音频片段；保留每段原请求、时间范围与 seed，不混用 Ref2VA 与 FL2VA 锚点。
+3. 只重试失败/未接受片段，比较身份一致性、口型、接缝和累计音画漂移；分别评估整首原轨作为 master audio 与生成片段音频。原轨回贴不保证口型同步。
+4. 记录 wall time、可取得的峰值内存、accepted-take ratio、重编码要求和失败案例，再作产品化决定；若身份/时序不达标，报告边界，不宣称无缝超过 15 秒生成。
+
+## 官方学习材料 / Learning sources
+
+下列仅为官方产品材料中的交互/工作流参考，**不是亲手使用后的测评或 hands-on benchmarks**，也不能证明本地 h3.c 的质量、速度或功能等价。
+
+| 来源 | 学习方向（不承诺对等实现） |
+|---|---|
+| [Google Flow](https://blog.google/innovation-and-ai/products/veo-updates-flow/) | 素材复用与连续镜头组织，参考 #9 的本地参考集思路 |
+| [LTX Studio tutorial](https://ltx.io/blog/ltx-studio-tutorial) | 分镜迭代、选片与 Elements 复用，参考 #8/#9 的个人项目闭环 |
+| [Adobe Firefly AI video editor](https://www.adobe.com/products/firefly/features/ai-video-editor.html) | 生成后的编排与轻量剪辑，参考 #10 的范围边界 |
+| [Runway Edit Studio](https://help.runwayml.com/hc/en-us/articles/51683104370451-Creating-with-Edit-Studio) | 编辑意图与素材衔接的交互参考，不据此承诺模型级视频编辑 |
+
+Song Storyboard 另受 [Henninges/h3-studio](https://github.com/Henninges/h3-studio) 的音乐视频工作流启发；实验结论必须来自本项目获准执行后的可追溯证据。
