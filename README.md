@@ -45,8 +45,9 @@
 ### 深度阅读
 
 - [h3.c vs 其他视频生成框架：优劣势分析](docs/h3c-vs-other-stacks.md)——和 SGLang / ComfyUI / VDN / MLX-H3 怎么选
-- [分镜持久化恢复](docs/persistence-recovery.md)——加载失败时阻止写入、保留原件与人工恢复步骤（#15，本分支）
-- [本地个人视频工作流路线图](docs/local-personal-workflow.md)——依赖、PR 拆分、数据契约与验收门槛；#7 已合并，#8 后端契约在本分支，UI 与 #9–#11 尚未交付
+- [分镜持久化恢复](docs/persistence-recovery.md)——加载失败时阻止写入、保留原件与人工恢复步骤（#15，PR #17 已合并）
+- [本地个人视频工作流路线图](docs/local-personal-workflow.md)——依赖、PR 拆分、数据契约与验收门槛；#7、#8 后端/前端均已合并；#14/#16/#17 已在 `main`（`1a1d35f`）；#9 前端 PR B 在本分支实现，待人工评审/合并；#10–#11 尚未交付
+- [本地参考集：中英操作指南与 API](docs/reference-sets-api.md)——顶部管理入口（无镜头也可用）、本地导入、有序参考集、显式应用与冻结快照；#9 后端 PR A (#16) 已合并，本 PR 不改后端
 
 ### 快速开始
 
@@ -69,6 +70,8 @@ npm run dev        # 自动拉起 FastAPI 后端(:8765) + Vite 前端
 
 默认无需鉴权，适合本地单机使用。如果后端需要暴露在局域网/公网可达的地址上，设置 `H3_STUDIO_TOKEN` 环境变量后再启动，所有写操作（生成、删除、编辑分镜板等）将要求 `Authorization: Bearer <token>`；只读接口（预览、轮询）不受影响。前端在「设置 → 访问令牌」里填入同样的 token 即可继续使用。
 
+**令牌仅保护写入，读取与媒体仍公开可访问。** 请保持本机使用，不要把它当作对外发布的完整访问控制；本地参考集不上传外部服务，也不保证身份或口型一致。
+
 ```bash
 H3_STUDIO_TOKEN=your-secret-token npm run dev
 ```
@@ -85,7 +88,9 @@ H3_STUDIO_TOKEN=your-secret-token npm run dev
 | 2026-09-14 | 吸收 [Henninges/h3-studio](https://github.com/Henninges/h3-studio) 优点：参考音频条件输入、结构化 Context-IR 提示词字段（空字段智能默认值），感谢 Henninges 的分享与热情交流；新增德语作为对他关注本项目的致敬，界面增至五语言 |
 | 2026-09-15 | **本分支（in this branch）**：[P0 #7](https://github.com/skaiy/h3.c-studio/issues/7) 条件输入与结构化提示词持久化、单条/批量共用后端请求构建与预检、按原任务快照安全续跑、保存冲突提示与回归测试；合并状态见关联 PR |
 | 2026-09-16 | [P1 #8](https://github.com/skaiy/h3.c-studio/issues/8) 后端 #13 已合并：不可变 take、旧 output 迁移、采用/删除 API、接力来源身份及 stale/missing 状态 |
-| 2026-09-16 | **本分支前端（待评审/合并）**：版本历史与只读参数快照、预览/采用分离、下游连续性警告、缺失媒体提示与安全删除；覆盖五语言。预览不生成、不改输入；采用前保存草稿；仅删除版本记录不删除原视频 |
+| 2026-09-16 | **#8 前端 PR B (#14) 已合并**：版本历史与只读参数快照、预览/采用分离、下游连续性警告、缺失媒体提示与安全删除；覆盖五语言。预览不生成、不改输入；采用前保存草稿；仅删除版本记录不删除原视频 |
+| 2026-09-16 | **`main`（`1a1d35f`）已包含 #14/#16/#17**：#9 后端 PR A (#16) 提供本地素材/参考集与冻结快照；#15 的启动恢复保护 (#17) 已合并 |
+| 2026-09-16 | **#9 前端 PR B 本分支实现，待人工评审/合并**：项目参考集管理、本地图片/音频导入、有序编辑与镜头显式应用、旧修订/缺失素材提示及历史参考快照；覆盖五语言。保存不应用、不生成；失败保留草稿，不自动重放写入；本 PR 不改后端 |
 
 ### 协议
 
@@ -134,8 +139,9 @@ This repository forks h3.c and adds a `studio/` web workbench: a prompt studio, 
 ### Further reading
 
 - [h3.c vs other video generation stacks](docs/h3c-vs-other-stacks.md) — how to choose between h3.c, SGLang, ComfyUI, VDN and MLX-H3
-- [Storyboard persistence recovery](docs/persistence-recovery.md) — write blocking, original-file preservation and manual recovery (#15, in this branch)
-- [Local personal video workflow roadmap](docs/local-personal-workflow.md) — dependencies, PR splits, data contracts and acceptance gates; #7 is merged, the #8 backend contract is in this branch, while its UI and #9–#11 are not delivered
+- [Storyboard persistence recovery](docs/persistence-recovery.md) — write blocking, original-file preservation and manual recovery (#15, PR #17 merged)
+- [Local personal video workflow roadmap](docs/local-personal-workflow.md) — dependencies, PR splits, data contracts and acceptance gates; #7 and both #8 PRs are merged; #14/#16/#17 are on `main` (`1a1d35f`); #9 frontend PR B is implemented in this branch, pending human review/merge; #10–#11 are not delivered
+- [Local reference sets: Chinese/English UI guide and API](docs/reference-sets-api.md) — header management even without shots, local imports, ordered sets, explicit application and frozen snapshots; #9 backend PR A (#16) is merged and this PR leaves the backend unchanged
 
 ### Quick start
 
@@ -158,6 +164,8 @@ Open the Vite URL (default http://localhost:3000).
 
 No auth is required by default, which is fine for local single-user use. If you expose the backend on a LAN- or internet-reachable address, set `H3_STUDIO_TOKEN` before starting it — every write operation (generate, delete, edit boards, etc.) will then require `Authorization: Bearer <token>`; read-only endpoints (preview, polling) are unaffected. Enter the same token under Settings → Access token in the UI.
 
+**The token protects writes only; reads and media remain public.** Keep this workflow local; the token is not complete access control for external hosting. Local reference sets do not upload to external services or guarantee identity consistency or lip sync.
+
 ```bash
 H3_STUDIO_TOKEN=your-secret-token npm run dev
 ```
@@ -174,7 +182,9 @@ H3_STUDIO_TOKEN=your-secret-token npm run dev
 | 2026-09-14 | Absorbed ideas from [Henninges/h3-studio](https://github.com/Henninges/h3-studio): reference-audio conditioning, structured Context-IR prompt fields with smart defaults — thanks to Henninges for sharing and the friendly exchange; added German as a tribute to his attention to this project, 5 languages total |
 | 2026-09-15 | **In this branch**: [P0 #7](https://github.com/skaiy/h3.c-studio/issues/7) conditioning-input and structured-prompt persistence, consistent single/batch server request building and preflight, safe resume from the original job snapshot, save-conflict feedback and regression tests; see the linked PR for merge status |
 | 2026-09-16 | [P1 #8](https://github.com/skaiy/h3.c-studio/issues/8) backend #13 merged: immutable takes, legacy-output migration, selection/deletion APIs, chain-source identity and stale/missing states |
-| 2026-09-16 | **Frontend in this branch (pending review/merge)**: take history and read-only snapshots, separate preview/adoption, downstream continuity warnings, missing-media feedback and safe deletion in five languages. Preview never generates or changes inputs; adoption flushes drafts first; deleting a take record retains its original video |
+| 2026-09-16 | **#8 frontend PR B (#14) merged**: take history and read-only snapshots, separate preview/adoption, downstream continuity warnings, missing-media feedback and safe deletion in five languages. Preview never generates or changes inputs; adoption flushes drafts first; deleting a take record retains its original video |
+| 2026-09-16 | **`main` (`1a1d35f`) includes #14/#16/#17**: #9 backend PR A (#16) provides local assets/reference sets and frozen snapshots; #15 startup recovery protection (#17) is merged |
+| 2026-09-16 | **#9 frontend PR B implemented in this branch, pending human review/merge**: project reference management, local image/audio imports, ordered editing and explicit shot application, old-revision/missing-media feedback and historical reference snapshots in five languages. Saving does not apply or generate; failures retain drafts without replaying writes; backend unchanged by this PR |
 
 ### Licensing
 

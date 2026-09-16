@@ -2,7 +2,7 @@ import type { ComponentProps } from 'react'
 import { fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import type { Shot, Take } from '@/lib/api'
+import type { ReferenceSnapshot, Shot, Take } from '@/lib/api'
 import { I18nContext } from '@/lib/i18nContext'
 import { LANGS, type I18nKey, type Lang } from '@/lib/i18nData'
 import { resources, translate } from '@/lib/i18nResources'
@@ -10,6 +10,21 @@ import TakePanel from './TakePanel'
 
 type Props = ComponentProps<typeof TakePanel>
 const t = (key: I18nKey) => translate('en', key)
+
+function referenceSnapshot(overrides: Partial<ReferenceSnapshot> = {}): ReferenceSnapshot {
+  return {
+    source_board_id: 'original-source-board', set_id: 'original-set-id', set_name: 'Original reference set', set_revision: 3,
+    images: [
+      { id: 'original-image-z-full-id', filename: 'z-original.png', kind: 'image', sha256: 'a'.repeat(64), size: 100, created_at: 10 },
+      { id: 'original-image-a-full-id', filename: 'a-original.png', kind: 'image', sha256: 'b'.repeat(64), size: 200, created_at: 20, missing: true },
+    ],
+    audio: [
+      { id: 'original-audio-z-full-id', filename: 'z-original.wav', kind: 'audio', sha256: 'c'.repeat(64), size: 300, duration: 2, created_at: 30 },
+      { id: 'original-audio-a-full-id', filename: 'a-original.wav', kind: 'audio', sha256: 'd'.repeat(64), size: 400, duration: 4, created_at: 40 },
+    ],
+    ...overrides,
+  }
+}
 
 function take(id: string, overrides: Partial<Take> = {}): Take {
   return {
@@ -67,10 +82,10 @@ describe('TakePanel', () => {
     const user = userEvent.setup()
     const { props, rerender, container } = setup({
       // Neither the output projection nor timestamp order may decide adoption or numbering.
-      shot: shot({ output: 'b.mp4', takes: [take('a', { created_at: 200 }), take('b', { created_at: 100 })] }),
+      shot: shot({ output: 'b.mp4', takes: [take('a', { created_at: 200 }), take('b', { created_at: 100, reference_snapshot: referenceSnapshot() })] }),
     })
     const adopted = screen.getByTestId('take-a'), browsed = screen.getByTestId('take-b')
-    expect(screen.getByText('2')).toBeInTheDocument()
+    expect(screen.getByText('2', { selector: 'span' })).toBeInTheDocument()
     expect(within(adopted).getByRole('heading', { name: 'Take 1' })).toBeInTheDocument()
     expect(within(browsed).getByRole('heading', { name: 'Take 2' })).toBeInTheDocument()
     expect(within(adopted).getByText(t('takeSelected'))).toBeInTheDocument()
@@ -127,6 +142,111 @@ describe('TakePanel', () => {
     for (const current of ['CURRENT PROMPT', 'current-first.png', 'current-last.png', 'current-ref.png', 'current-audio.wav', 'current-job']) {
       expect(card).not.toHaveTextContent(current)
     }
+  })
+
+  it('keeps ordered take provenance frozen when the live shot snapshot changes, without fetching or mutating on expansion', async () => {
+    const fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('No network requests expected'))
+    try {
+      const original = referenceSnapshot()
+      const { props, rerender, container } = setup({ shot: shot({
+        takes: [take('a', { reference_snapshot: original })], reference_snapshot: referenceSnapshot(),
+      }) })
+      const card = screen.getByTestId('take-a')
+      const user = userEvent.setup()
+      await user.click(within(card).getByText(t('takeSnapshot')))
+      const provenance = within(card).getByRole('region', { name: t('referenceSnapshot') })
+      const before = provenance.textContent
+      rerender(panel({ ...props, shot: { ...props.shot, reference_snapshot: {
+        ...original, source_board_id: 'LIVE-BOARD', set_name: 'LIVE-RENAMED-SET', set_revision: 8,
+        images: [{ ...original.images[0], id: 'LIVE-IMAGE-ID', filename: 'LIVE-IMAGE.png', sha256: 'e'.repeat(64) }],
+        audio: [{ ...original.audio[0], id: 'LIVE-AUDIO-ID', filename: 'LIVE-AUDIO.wav', sha256: 'f'.repeat(64) }],
+      } } }))
+      expect(provenance.textContent).toBe(before)
+      for (const [key, value] of [
+        ['referenceName', original.set_name], ['referenceSourceSet', original.set_id],
+        ['referenceSourceBoard', original.source_board_id], ['referenceRevision', '3'],
+      ] as [I18nKey, string][]) expect(metadata(provenance, key)).toHaveTextContent(value)
+      for (const [key, assets] of [['referenceImages', original.images], ['referenceAudio', original.audio]] as const) {
+        const items = within(within(provenance).getByRole('list', { name: t(key) })).getAllByRole('listitem')
+        expect(items).toHaveLength(assets.length)
+        assets.forEach((asset, index) => {
+          expect(items[index]).toHaveTextContent(asset.filename)
+          expect(items[index]).toHaveTextContent(`ID: ${asset.id}`)
+          expect(items[index]).toHaveTextContent(`SHA-256: ${asset.sha256}`)
+          expect(metadata(items[index], 'referenceSize')).toHaveTextContent(String(asset.size))
+          if (asset.kind === 'audio') expect(metadata(items[index], 'referenceDuration')).toHaveTextContent(String(asset.duration))
+        })
+      }
+      expect(within(provenance).getByText(t('referenceMissing'))).toBeInTheDocument()
+      expect(card).not.toHaveTextContent('LIVE-')
+      expect(container.querySelector('img, audio, video, iframe, a, input, select')).toBeNull()
+      expect(within(provenance).queryByRole('button')).not.toBeInTheDocument()
+      await user.click(within(card).getByText(t('takeSnapshot')))
+      await user.click(within(card).getByText(t('takeSnapshot')))
+      expect(provenance.textContent).toBe(before)
+      expect(fetch).not.toHaveBeenCalled()
+      expect(props.onPreview).not.toHaveBeenCalled()
+      expect(props.onSelect).not.toHaveBeenCalled()
+      expect(props.onDelete).not.toHaveBeenCalled()
+    } finally {
+      fetch.mockRestore()
+    }
+  })
+
+  it.each([undefined, null, 'UNTRUSTED SNAPSHOT', 42, ['UNTRUSTED SNAPSHOT']].map((value) => ({ value })))('reports unavailable historical provenance as unknown without borrowing a live snapshot (%j)', async ({ value }) => {
+    setup({ shot: shot({
+      reference_snapshot: referenceSnapshot(),
+      takes: [take('a', { legacy: true, reference_snapshot: value as unknown as Take['reference_snapshot'] })],
+    }) })
+    const card = screen.getByTestId('take-a')
+    await userEvent.setup().click(within(card).getByText(t('takeSnapshot')))
+    const provenance = within(card).getByRole('region', { name: t('referenceSnapshot') })
+    expect(within(provenance).getByText(t('takeUnknown'))).toBeInTheDocument()
+    expect(within(provenance).queryByRole('list')).not.toBeInTheDocument()
+    expect(provenance).not.toHaveTextContent('Original')
+    expect(provenance).not.toHaveTextContent('UNTRUSTED')
+    expect(provenance).not.toHaveTextContent(t('referenceNone'))
+  })
+
+  it('escapes reference text and preserves malformed asset positions without rendering arbitrary objects', async () => {
+    const filename = '<img src="untrusted.png" onerror="alert(1)">'
+    const malformed = {
+      set_name: '<script>untrusted name</script>', set_id: { internal: 'DO_NOT_RENDER_OBJECT' },
+      source_board_id: ['DO_NOT_RENDER_OBJECT'], set_revision: Number.NaN,
+      images: [null, {
+        filename, id: { internal: 'DO_NOT_RENDER_OBJECT' }, sha256: ['DO_NOT_RENDER_OBJECT'], size: Number.NaN, missing: 'true',
+      }, ['DO_NOT_RENDER_OBJECT']],
+      audio: { internal: 'DO_NOT_RENDER_OBJECT' }, extra: 'DO_NOT_RENDER_OBJECT',
+    }
+    setup({ shot: shot({ takes: [take('a', { reference_snapshot: malformed as unknown as ReferenceSnapshot })] }) })
+    const card = screen.getByTestId('take-a')
+    await userEvent.setup().click(within(card).getByText(t('takeSnapshot')))
+    const provenance = within(card).getByRole('region', { name: t('referenceSnapshot') })
+    expect(metadata(provenance, 'referenceName')).toHaveTextContent(malformed.set_name)
+    for (const key of ['referenceSourceSet', 'referenceSourceBoard', 'referenceRevision'] as const) {
+      expect(metadata(provenance, key)).toHaveTextContent(t('takeUnknown'))
+    }
+    const items = within(within(provenance).getByRole('list', { name: t('referenceImages') })).getAllByRole('listitem')
+    expect(items).toHaveLength(3)
+    expect(items[1]).toHaveTextContent(filename)
+    expect(items[1]).toHaveTextContent(`ID: ${t('takeUnknown')}`)
+    expect(items[1]).toHaveTextContent(`SHA-256: ${t('takeUnknown')}`)
+    expect(metadata(items[1], 'referenceSize')).toHaveTextContent(t('takeUnknown'))
+    expect(within(provenance).getByRole('heading', { name: t('referenceAudio') }).nextElementSibling).toHaveTextContent(t('takeUnknown'))
+    expect(provenance.querySelector('img, script, audio, video, a')).toBeNull()
+    expect(provenance).not.toHaveTextContent('DO_NOT_RENDER_OBJECT')
+    expect(provenance).not.toHaveTextContent('[object Object]')
+    expect(provenance).not.toHaveTextContent(t('referenceMissing'))
+  })
+
+  it('distinguishes recorded empty reference lists from unknown provenance', async () => {
+    setup({ shot: shot({ takes: [take('a', { reference_snapshot: referenceSnapshot({ images: [], audio: [] }) })] }) })
+    const card = screen.getByTestId('take-a')
+    await userEvent.setup().click(within(card).getByText(t('takeSnapshot')))
+    const provenance = within(card).getByRole('region', { name: t('referenceSnapshot') })
+    expect(within(provenance).getAllByText(t('referenceNone'))).toHaveLength(2)
+    expect(within(provenance).queryByText(t('takeUnknown'))).not.toBeInTheDocument()
+    expect(within(provenance).queryByRole('list')).not.toBeInTheDocument()
   })
 
   it.each([null, { prompt: 'UNTRUSTED SNAPSHOT', seed: 123 }] as Take['request'][])('makes legacy and unknown metadata explicit without fabricating values (%j)', (request) => {
@@ -221,6 +341,7 @@ describe('TakePanel', () => {
     expect(screen.getByRole('heading', { name: translate(lang, 'takeHistory') })).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent(translate(lang, 'takeStaleHint'))
     expect(screen.getByText(translate(lang, 'takePreviewHint'))).toBeInTheDocument()
+    expect(within(screen.getByTestId('take-a')).getByText(translate(lang, 'referenceSnapshot'), { selector: 'h5' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: `${translate(lang, 'takeDelete')} · ${translate(lang, 'takeLabel')} 2` })).toBeEnabled()
   })
 })

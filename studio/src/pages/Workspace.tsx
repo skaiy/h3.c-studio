@@ -13,6 +13,9 @@ import PreviewPane from '@/components/PreviewPane'
 import LibraryStrip from '@/components/LibraryStrip'
 import SettingsSheet from '@/components/SettingsSheet'
 import TakePanel from '@/components/TakePanel'
+import ReferenceManager from '@/components/ReferenceManager'
+import ReferencePicker from '@/components/ReferencePicker'
+import type { ReferenceMutation } from '@/lib/referenceSets'
 
 function newShot(): Shot {
   return {
@@ -38,6 +41,8 @@ export default function Workspace() {
   const [resumedFrom, setResumedFrom] = useState<string | null>(null)
   const [device, setDevice] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
+  // Keep an open editor bound to its original board, even during route navigation.
+  const [referenceBoardId, setReferenceBoardId] = useState<string | null>(null)
   const [sequenceIdx, setSequenceIdx] = useState<number | null>(null)
   const [operationBoards, setOperationBoards] = useState<string[]>([])
   const [operationErrors, setOperationErrors] = useState<Record<string, string>>({})
@@ -184,23 +189,43 @@ export default function Workspace() {
   const patchShot = useCallback((patch: Partial<Shot>) => {
     patchBoard((b) => ({
       ...b,
-      shots: b.shots.map((s) => (s.id === selectedShotId ? { ...s, ...patch } : s)),
+      shots: b.shots.map((s) => {
+        if (s.id !== selectedShotId) return s
+        const changedRefs = (['ref_images', 'ref_audio'] as const).some((key) =>
+          patch[key] !== undefined && JSON.stringify(patch[key]) !== JSON.stringify(s[key] ?? []))
+        return { ...s, ...patch, ...(changedRefs ? { reference_snapshot: null, reference_snapshot_missing: false } : {}) }
+      }),
     }))
   }, [patchBoard, selectedShotId])
 
   const operate = async (id: string, action: () => Promise<unknown>) => {
-    if (operationLock.current.has(id)) return
+    if (operationLock.current.has(id)) return false
     operationLock.current.add(id)
     setOperationBoards((ids) => [...ids, id])
     setOperationErrors((errors) => ({ ...errors, [id]: '' }))
-    try { await action() }
-    catch (error) { setOperationErrors((errors) => ({ ...errors, [id]: error instanceof Error ? error.message : t('operationFailed') })) }
+    try { await action(); return true }
+    catch (error) {
+      setOperationErrors((errors) => ({ ...errors, [id]: error instanceof Error ? error.message : t('operationFailed') }))
+      return false
+    }
     finally {
       await Promise.all([refreshBoard(id), refreshJobs(), refreshBoards()])
       operationLock.current.delete(id)
       setOperationBoards((ids) => ids.filter((pending) => pending !== id))
     }
   }
+
+  const mutateReferences = (id: string, action: Parameters<ReferenceMutation>[0]) => operate(id, async () => {
+    const current = drafts.get(id)
+    if (!current || current.status === 'running' || current.shots.some((s) => s.status === 'running' || s.status === 'queued')) {
+      throw new Error(t('referenceBusy'))
+    }
+    const saved = await drafts.flush(id)
+    const updated = await action(saved)
+    if (updated.id !== id) throw new Error(t('referenceConflict'))
+    drafts.receive(updated)
+    // Applying/organizing references never changes playback, adoption, or generation.
+  })
 
   const generateShot = async () => {
     if (!board || !shot) return
@@ -365,6 +390,14 @@ export default function Workspace() {
     </div>
   )
 
+  const referenceBoard = referenceBoardId ? drafts.get(referenceBoardId) : null
+  const referenceError = (id: string) => drafts.state(id).error?.message || operationErrors[id] || boardLoadErrors[id] || listError || undefined
+  const referenceManager = referenceBoard && <ReferenceManager key={referenceBoard.id} board={referenceBoard}
+    disabled={referenceBoard.status === 'running' || referenceBoard.shots.some((s) => s.status === 'running' || s.status === 'queued')
+      || operationBoards.includes(referenceBoard.id) || !!boardLoadErrors[referenceBoard.id] || listError !== null}
+    error={referenceError(referenceBoard.id)} onMutate={(action) => mutateReferences(referenceBoard.id, action)}
+    onClose={() => setReferenceBoardId(null)} />
+
   if (!board) {
     return (
       <div className="h-full flex flex-col bg-background text-foreground">
@@ -374,6 +407,7 @@ export default function Workspace() {
           {settingsButton}
         </div>
         <SettingsSheet open={settingsOpen} onOpenChange={setSettingsOpen} />
+        {referenceManager}
         {loadErrorBanner}
         {loadError === null && <div className="flex-1 flex items-center justify-center text-muted-foreground text-[12px] uppercase tracking-[0.2em]">H3 STUDIO…</div>}
       </div>
@@ -397,9 +431,11 @@ export default function Workspace() {
         <div className="flex-1" />
         <div className="bar mono normal-case tracking-normal">{device || '…'}</div>
         <div className="bar">{jobs.filter((j) => j.status === 'queued' || j.status === 'running').length} {t('activeJobs')}</div>
+        <button className="bar linkfade border-l border-border" onClick={() => setReferenceBoardId(board.id)}>{t('referenceOpen')}</button>
         {settingsButton}
       </div>
       <SettingsSheet open={settingsOpen} onOpenChange={setSettingsOpen} />
+      {referenceManager}
       {loadErrorBanner}
       {(saveState.error || operationError) && (
         <div role="alert" className="px-3 py-2 text-xs text-red-300 border-b border-border">
@@ -457,7 +493,10 @@ export default function Workspace() {
             onChange={patchShot}
             onGenerate={generateShot}
             generating={boardBusy}
-            takePanel={<TakePanel key={`${board.id}/${shot.id}`} shot={shot}
+            referencePanel={<ReferencePicker key={`references/${board.id}/${shot.id}`} board={board} shot={shot}
+              disabled={boardBusy || loadError !== null} error={referenceError(board.id)} errorInParent
+              onMutate={(action) => mutateReferences(board.id, action)} onManage={() => setReferenceBoardId(board.id)} />}
+            takePanel={<TakePanel key={`takes/${board.id}/${shot.id}`} shot={shot}
               previewingTakeId={browsedTake?.id ?? null} disabled={boardBusy}
               onPreview={previewTake} onSelect={(id) => { void mutateTake(id, false) }}
               onDelete={(id) => { void mutateTake(id, true) }} />}

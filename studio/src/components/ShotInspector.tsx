@@ -126,9 +126,10 @@ interface Props {
   onGenerate: () => void
   generating: boolean
   takePanel?: ReactNode
+  referencePanel?: ReactNode
 }
 
-export default function ShotInspector({ shot, chain, isFirst, onChange, onGenerate, generating, takePanel }: Props) {
+export default function ShotInspector({ shot, chain, isFirst, onChange, onGenerate, generating, takePanel, referencePanel }: Props) {
   const { lang } = useI18n()
   const t = (key: StudioI18nKey) => translate(lang, key)
   const promptMode = shot.prompt_mode ?? 'simple'
@@ -272,6 +273,7 @@ export default function ShotInspector({ shot, chain, isFirst, onChange, onGenera
       {uploadStates[shot.id] === 'failed' && (
         <p role="alert" className="px-2 py-1 text-[11px] text-red-400">{t('uploadFailed')}</p>
       )}
+      {referencePanel}
       <UploadSlot title={t('firstFrame')} files={firstFrame} removeLabel={t('remove')} disabled={uploading}
         onAdd={upload((name) => ({ first_frame: name }))} onRemove={() => onChange({ first_frame: null })} />
       <UploadSlot title={t('lastFrame')} files={lastFrame} removeLabel={t('remove')} disabled={uploading}

@@ -2,15 +2,15 @@
 
 2026-09-15 · 用户已确认方向：本机、个人项目、先可靠生成，再复用与轻量剪辑。
 
-**Status:** #7, #8 backend PR A (#13), #9 backend PR A (#16), and #15 startup recovery protection (#17) are merged. #8 UI PR B (#14) is implemented in this branch, pending review/merge, with #16/#17 integrated from main. #9 UI and #10–#11 are not delivered. GitHub tracks current merge status; no real GPU validation of Song Storyboard is claimed.
+**Status (2026-09-16):** #7, #8 backend PR A (#13) and UI PR B (#14), #9 backend PR A (#16), and #15 startup recovery protection (#17) are merged; `main` at `1a1d35f` includes #14/#16/#17. #9 frontend PR B is implemented in this branch, pending human review/merge, with no backend changes in this PR. #10–#11 are not delivered. GitHub tracks current merge status; no real-browser or GPU validation is claimed for this reference UI, nor real GPU validation of Song Storyboard.
 
 ## 路线图与 PR 依赖 / Roadmap & dependencies
 
 | Issue | 状态 | 范围与 PR 拆分 | 前置依赖 |
 |---|---|---|---|
 | [#7 · P0](https://github.com/skaiy/h3.c-studio/issues/7) | 已合并 | 输入/结构化提示词持久化、单条/批量共用请求构建与预检、按原任务安全续跑 | 当前可靠性基础；不含 take 选择 |
-| [#8 · Local takes](https://github.com/skaiy/h3.c-studio/issues/8) | A (#13) 已合并；B (#14) 本分支实现，待评审/合并 | A：后端 take schema、旧数据迁移与选择 API；B：比较/采用 UI、下游连续性警告 | #7、A 已合并；B 直接到 main |
-| [#9 · Local reference sets](https://github.com/skaiy/h3.c-studio/issues/9) | A (#16) 已合并；B 尚未开始 | A：本地 assets/参考集 API；B：项目内管理与选择器 UI | #7、#8 A、#9 A 已合并；不依赖 #14 UI；B 从最新 main 开发 |
+| [#8 · Local takes](https://github.com/skaiy/h3.c-studio/issues/8) | A (#13)、B (#14) 均已合并 | A：后端 take schema、旧数据迁移与选择 API；B：比较/采用 UI、下游连续性警告 | #7、A、B 已合并到 main |
+| [#9 · Local reference sets](https://github.com/skaiy/h3.c-studio/issues/9) | A (#16) 已合并；B 本分支实现，待人工评审/合并 | A：本地 assets/参考集 API；B：项目内管理、导入、有序编辑、选择/显式应用与历史参考快照 UI | 基于 main `1a1d35f`，已含 #14/#16/#17；本 PR 不改后端 |
 | [#10 · Lightweight edit/export](https://github.com/skaiy/h3.c-studio/issues/10) | 规划中 | A：edit manifest、后端导出与 fixture 测试；B：最小 trim/配乐 UI | #7、#8 的选定 take 语义合并；B 等 A 合并 |
 | [#11 · Song Storyboard](https://github.com/skaiy/h3.c-studio/issues/11) | 规划中，仅可行性实验 | 小型离线切段/对齐原型，记录实验结果后再决定产品 UI | 先 #7；产品化前需 #9 参考集与 #10 基础导出契约 |
 
@@ -44,17 +44,19 @@
 - 旧 output 导入为一个 legacy take；无法从历史记录确认的参数/来源明确标为 unknown，不拿当前镜头参数补写，不伪造可复现性。无接力来源与“历史来源未知”必须可区分。
 - 失败/中断属于 job 历史，不冒充成功 take。失败重试保留旧 take 和选择；选择操作不能排队生成，运行中任务完成也不能静默覆盖用户选择。
 - 复制 board/shot 时明确新身份与 take/来源映射；丢失媒体进入缺失/修复状态，不暗中采用其他 take。删除涉及引用时必须有显式处理策略，不能连带删除个人源素材。
-- 后端 PR A 提供镜头 take 列表、bodyless 采用和元数据删除端点；采用返回整板最新投影与连续性状态。删除 take 不删除视频文件，已采用或被 take/job 历史引用的版本返回冲突。前端 PR B 合并前，这些接口不代表 UI 已交付。
-- 前端 PR B：右侧版本历史按生成顺序浏览，展开只读参数快照；播放仅临时预览，采用先保存草稿再调用选择接口，不改 prompt、不生成。返回已采用版本后继续跟随 canonical 选择；旧异步响应不抢占新预览。运行/排队时禁用修改；stale/unknown 显示文字说明，缺失的采用文件阻止连续预览/拼接而非跳过。元数据删除经确认且不删除原片；媒体库删除使用鉴权接口并显示引用冲突。
+- 后端 PR A (#13) 已合并，提供镜头 take 列表、bodyless 采用和元数据删除端点；采用返回整板最新投影与连续性状态。删除 take 不删除视频文件，已采用或被 take/job 历史引用的版本返回冲突。
+- 前端 PR B (#14) 已合并：右侧版本历史按生成顺序浏览，展开只读参数快照；播放仅临时预览，采用先保存草稿再调用选择接口，不改 prompt、不生成。返回已采用版本后继续跟随 canonical 选择；旧异步响应不抢占新预览。运行/排队时禁用修改；stale/unknown 显示文字说明，缺失的采用文件阻止连续预览/拼接而非跳过。元数据删除经确认且不删除原片；媒体库删除使用鉴权接口并显示引用冲突。
 
 ### #9：本地 assets 与参考集快照
 
 - Asset 使用稳定 ID、受管理的本地文件名、媒体类型、可取得的大小/时长。可移植 manifest 不写绝对路径；校验路径，媒体探测限时。
 - Reference set 保存 `id`、名称、kind、**有序**图像/音频 asset IDs、可选 notes 与 revision。
 - 应用参考集时复制明确的素材引用快照并记录来源集 ID/revision，**不是 live alias**。编辑参考集不能改变已应用镜头、排队请求或历史 take；更新需显式重新应用。
-- 历史请求保留稳定素材引用；替换素材应产生新身份，不能用同一别名悄悄指向新文件。缺失媒体提供 repair/relink 状态，不自动删除仍被引用的文件。
+- 历史请求保留稳定素材引用；替换素材应产生新身份，不能用同一别名悄悄指向新文件。缺失媒体显示修复提示：恢复完全相同的原件，或导入新身份、更新参考集并显式重新应用；无破坏性原地 relink，不删除源媒体。
 - 应用前展示 Ref2VA/FL2VA 冲突；不静默清空用户原条件输入，不上传外部服务。
-- A 的具体接口与复制/修复边界见 [reference-sets-api.md](reference-sets-api.md)：以 board 为项目，登记时独立复制并校验内容指纹，应用固定来源版本；缺失时恢复原件或登记新身份再显式重新应用，绝不原地改写历史。软末帧接力仍只属 #11 实验规划。
+- B 已实现本分支 UI：顶部管理入口在无镜头时也可用；本地图片/音频导入（每文件 ≤256 MiB），按名称/kind 创建参考集并排序（1–9 张图、0–3 段音频，单段 2–15 秒、合计 ≤15 秒）。保存不应用；镜头选择后显式应用，不同已有参考须确认覆盖，首尾帧锚点须先手动移除。已应用镜头显示冻结旧修订，版本历史显示只读参考快照；编辑后须显式重新应用。
+- 409 冲突、参考变更落盘失败（500）或启动恢复保护（503）保留草稿、原修订和选择，不自动重放写入。「重试加载」恢复读取，不丢草稿也不重做应用；参考集编辑器的「放弃编辑并加载最新修订」须确认且会丢弃该编辑草稿。不要刷新浏览器来处理未保存草稿。现有 token 仅保护写操作，读取/媒体仍公开；仅供本机个人使用，不保证身份或口型一致。
+- A 的具体接口、复制/修复边界与 B 的中英操作指南见 [reference-sets-api.md](reference-sets-api.md)：以 board 为项目，登记时独立复制并校验内容指纹，应用固定来源版本；本 PR 不改后端。软末帧接力仍只属 #11 实验规划。
 
 ### #10：edit manifest 与固定 take 的导出
 
@@ -80,6 +82,8 @@
 - 在 `studio/` 运行 `npm test`、`npm run lint`、`npm run i18n:check`、`npm run build`；后端在 `studio/server/` 运行 `.venv/bin/pytest -v`（安装见贡献指南）。PR 记录实际命令、退出码、结果及未验证部分；失败不能写成通过。
 - 引擎硬约束以实际源码为准：参考数量、音频规则、Ref2VA/FL2VA 互斥；音频用限时 ffprobe 检查。社区对 token reduction + 音频的经验警告应与硬性拒绝规则区分。
 - **未经单独明确 opt-in，不运行真实 GPU 生成、模型下载或昂贵长任务。** 新外部依赖须另获批准；不自动云上传、不暴露凭据。
+
+本分支验证（2026-09-16）：435 项前端测试、383 项后端测试，以及 build、lint、i18n 检查均通过。前端使用 mocked HTTP/jsdom，并非真实浏览器；后端包含可用时运行的小型真实 PNG/WAV 媒体测试。它们不证明真实 GPU 生成质量、身份一致或口型同步。
 
 ## #11：有界 Song Storyboard 实验
 

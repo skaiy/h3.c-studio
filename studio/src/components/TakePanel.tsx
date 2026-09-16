@@ -49,6 +49,71 @@ function Metadata({ label, children }: { label: string; children: ReactNode }) {
   )
 }
 
+function referenceRecord(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === 'object' && !Array.isArray(value) ? value as Record<string, unknown> : null
+}
+
+function referenceText(value: unknown, t: Translate): string {
+  return typeof value === 'string' && value !== '' ? value : t('takeUnknown')
+}
+
+function referenceNumber(value: unknown, t: Translate): string {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? String(value) : t('takeUnknown')
+}
+
+function HistoricalReferenceAssets({ value, label, audio, t }: { value: unknown; label: string; audio: boolean; t: Translate }) {
+  return (
+    <div className="pt-2">
+      <h6 className="text-muted-foreground">{label}</h6>
+      {!Array.isArray(value) ? <p>{t('takeUnknown')}</p> : value.length === 0 ? <p>{t('referenceNone')}</p> : (
+        <ol aria-label={label} className="list-decimal space-y-2 pl-5">
+          {value.map((item, index) => {
+            const asset = referenceRecord(item)
+            return (
+              <li key={index} className="mono whitespace-pre-wrap break-words [overflow-wrap:anywhere]">
+                <p>{referenceText(asset?.filename, t)}</p>
+                <p>ID: {referenceText(asset?.id, t)}</p>
+                <p>SHA-256: {referenceText(asset?.sha256, t)}</p>
+                <dl>
+                  <Metadata label={t('referenceSize')}>{referenceNumber(asset?.size, t)}</Metadata>
+                  {audio && <Metadata label={t('referenceDuration')}>{referenceNumber(asset?.duration, t)}</Metadata>}
+                </dl>
+                {asset?.missing === true && <p className="text-amber-300">{t('referenceMissing')}</p>}
+              </li>
+            )
+          })}
+        </ol>
+      )}
+    </div>
+  )
+}
+
+// Historical provenance is text-only: never resolve assets or sets against live state.
+function HistoricalReferences({ value, headingId, t }: { value: unknown; headingId: string; t: Translate }) {
+  const snapshot = referenceRecord(value)
+  const revision = snapshot?.set_revision
+  return (
+    <section aria-labelledby={headingId} className="mt-2 border-t border-border pt-2">
+      <h5 id={headingId} className="font-semibold">{t('referenceSnapshot')}</h5>
+      {!snapshot ? <p className="pt-1 text-muted-foreground">{t('takeUnknown')}</p> : (
+        <>
+          <p className="py-1 text-muted-foreground">{t('referenceSnapshotHint')}</p>
+          <dl>
+            <Metadata label={t('referenceName')}>{referenceText(snapshot.set_name, t)}</Metadata>
+            <Metadata label={t('referenceSourceSet')}>{referenceText(snapshot.set_id, t)}</Metadata>
+            <Metadata label={t('referenceRevision')}>
+              {typeof revision === 'number' && Number.isInteger(revision) && revision > 0 ? String(revision) : t('takeUnknown')}
+            </Metadata>
+            <Metadata label={t('referenceSourceBoard')}>{referenceText(snapshot.source_board_id, t)}</Metadata>
+          </dl>
+          <HistoricalReferenceAssets value={snapshot.images} label={t('referenceImages')} audio={false} t={t} />
+          <HistoricalReferenceAssets value={snapshot.audio} label={t('referenceAudio')} audio t={t} />
+        </>
+      )}
+    </section>
+  )
+}
+
 export default function TakePanel({ shot, previewingTakeId, disabled, onPreview, onSelect, onDelete }: Props) {
   const { t, lang } = useI18n()
   const headingId = useId()
@@ -120,6 +185,7 @@ export default function TakePanel({ shot, previewingTakeId, disabled, onPreview,
                         {take.source_unknown ? t('takeUnknown') : scalarText(take.source_take_id, t)}
                       </Metadata>
                     </dl>
+                    <HistoricalReferences value={take.reference_snapshot} headingId={`${labelId}-references`} t={t} />
                   </details>
                   <div role="group" aria-label={label} className="mt-2 flex flex-wrap gap-1.5">
                     <button type="button" className={controlClass} aria-label={`${t('play')} · ${label}`} aria-pressed={previewing}

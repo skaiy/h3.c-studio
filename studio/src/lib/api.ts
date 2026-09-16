@@ -34,6 +34,42 @@ export interface PromptFields {
   audio: string
 }
 
+export interface ReferenceAsset {
+  id: string
+  filename: string
+  kind: 'image' | 'audio'
+  size: number
+  sha256: string
+  created_at: number
+  duration?: number | null
+  width?: number | null
+  height?: number | null
+  missing?: boolean
+}
+
+export interface ReferenceSetFields {
+  name: string
+  kind: 'character' | 'scene' | 'style' | 'other'
+  image_asset_ids: string[]
+  audio_asset_ids: string[]
+  notes: string
+}
+
+export interface ReferenceSet extends ReferenceSetFields {
+  id: string
+  revision: number
+  missing_asset_ids?: string[]
+}
+
+export interface ReferenceSnapshot {
+  source_board_id: string
+  set_id: string
+  set_revision: number
+  set_name: string
+  images: ReferenceAsset[]
+  audio: ReferenceAsset[]
+}
+
 export interface Job {
   id: string
   label: string
@@ -48,6 +84,7 @@ export interface Job {
   checkpoint?: string
   params: Record<string, unknown>
   log?: string[]
+  reference_snapshot?: ReferenceSnapshot | null
 }
 
 export interface VideoItem {
@@ -148,6 +185,8 @@ export interface Shot {
   continuity_state?: 'none' | 'current' | 'unknown' | 'stale'
   stale?: boolean
   output_missing?: boolean
+  reference_snapshot?: ReferenceSnapshot | null
+  reference_snapshot_missing?: boolean
 }
 
 /** Historical snapshots may contain unknown/older fields; never fill with live shot inputs. */
@@ -164,6 +203,7 @@ export interface Take {
   legacy: boolean
   model_name: string | null
   missing: boolean
+  reference_snapshot?: ReferenceSnapshot | null
 }
 
 export interface Board {
@@ -175,6 +215,8 @@ export interface Board {
   result: string | null
   createdAt: number
   modifiedAt: number
+  assets?: ReferenceAsset[]
+  reference_sets?: ReferenceSet[]
 }
 
 export interface BoardSummary {
@@ -187,6 +229,12 @@ export interface BoardSummary {
   duration: number
   createdAt: number
   modifiedAt: number
+}
+
+// A ReferenceSet is assignable to ReferenceSetFields; never send its server-owned fields.
+function referenceSetPayload(fields: ReferenceSetFields): ReferenceSetFields {
+  const { name, kind, image_asset_ids, audio_asset_ids, notes } = fields
+  return { name, kind, image_asset_ids, audio_asset_ids, notes }
 }
 
 export const api = {
@@ -222,6 +270,36 @@ export const api = {
     req<{ name: string }>(`/api/extract-last-frame/${encodeURIComponent(name)}`, { method: 'POST' }),
   boards: () => req<BoardSummary[]>('/api/boards'),
   board: (id: string) => req<Board>(`/api/boards/${encodeURIComponent(id)}`),
+  assets: (boardId: string) => req<ReferenceAsset[]>(`/api/boards/${encodeURIComponent(boardId)}/assets`),
+  referenceSets: (boardId: string) => req<ReferenceSet[]>(`/api/boards/${encodeURIComponent(boardId)}/reference-sets`),
+  importReferenceAsset: (boardId: string, filename: string, kind: ReferenceAsset['kind'], boardRevision: number) =>
+    req<Board>(`/api/boards/${encodeURIComponent(boardId)}/assets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filename, kind, expected_board_revision: boardRevision }),
+    }),
+  deleteReferenceAsset: (boardId: string, assetId: string, boardRevision: number) =>
+    req<Board>(`/api/boards/${encodeURIComponent(boardId)}/assets/${encodeURIComponent(assetId)}?${new URLSearchParams({ expected_board_revision: String(boardRevision) })}`, { method: 'DELETE' }),
+  createReferenceSet: (boardId: string, fields: ReferenceSetFields, boardRevision: number) =>
+    req<Board>(`/api/boards/${encodeURIComponent(boardId)}/reference-sets`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...referenceSetPayload(fields), expected_board_revision: boardRevision }),
+    }),
+  updateReferenceSet: (boardId: string, setId: string, fields: ReferenceSetFields, boardRevision: number, setRevision: number) =>
+    req<Board>(`/api/boards/${encodeURIComponent(boardId)}/reference-sets/${encodeURIComponent(setId)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ ...referenceSetPayload(fields), expected_board_revision: boardRevision, expected_set_revision: setRevision }),
+    }),
+  deleteReferenceSet: (boardId: string, setId: string, boardRevision: number) =>
+    req<Board>(`/api/boards/${encodeURIComponent(boardId)}/reference-sets/${encodeURIComponent(setId)}?${new URLSearchParams({ expected_board_revision: String(boardRevision) })}`, { method: 'DELETE' }),
+  applyReferenceSet: (boardId: string, shotId: string, setId: string, boardRevision: number, setRevision: number, replaceExisting = false) =>
+    req<Board>(`/api/boards/${encodeURIComponent(boardId)}/shots/${encodeURIComponent(shotId)}/reference-sets/${encodeURIComponent(setId)}/apply`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ expected_board_revision: boardRevision, expected_set_revision: setRevision, replace_existing: replaceExisting }),
+    }),
   saveBoard: (b: Board) =>
     req<Board>('/api/boards', {
       method: 'POST',
