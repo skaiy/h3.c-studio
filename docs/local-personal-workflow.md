@@ -2,14 +2,14 @@
 
 2026-09-15 · 用户已确认方向：本机、个人项目、先可靠生成，再复用与轻量剪辑。
 
-**Status:** #7 is implemented in this branch, pending review/merge; #8–#11 are planned, not delivered. The contracts and acceptance gates below do not imply released APIs or verified generation quality. GitHub tracks current merge status.
+**Status:** #7 is merged. #8 backend PR A is implemented in this branch, pending review/merge; its UI PR B and #9–#11 are not delivered. The contracts below do not imply released UI or verified generation quality. GitHub tracks current merge status.
 
 ## 路线图与 PR 依赖 / Roadmap & dependencies
 
 | Issue | 状态 | 范围与 PR 拆分 | 前置依赖 |
 |---|---|---|---|
-| [#7 · P0](https://github.com/skaiy/h3.c-studio/issues/7) | 本分支实现，待评审/合并 | 一个完整修复 PR：输入/结构化提示词持久化、单条/批量共用请求构建与预检、按原任务安全续跑 | 当前可靠性基础；不含 take 选择 |
-| [#8 · Local takes](https://github.com/skaiy/h3.c-studio/issues/8) | 规划中 | A：后端 take schema、旧数据迁移与选择 API；B：比较/采用 UI、下游连续性警告 | #7 合并；B 等 A 合并 |
+| [#7 · P0](https://github.com/skaiy/h3.c-studio/issues/7) | 已合并 | 输入/结构化提示词持久化、单条/批量共用请求构建与预检、按原任务安全续跑 | 当前可靠性基础；不含 take 选择 |
+| [#8 · Local takes](https://github.com/skaiy/h3.c-studio/issues/8) | A 在本分支实现，待评审/合并；B 未开始 | A：后端 take schema、旧数据迁移与选择 API；B：比较/采用 UI、下游连续性警告 | #7 已合并；B 等 A 合并 |
 | [#9 · Local reference sets](https://github.com/skaiy/h3.c-studio/issues/9) | 规划中 | A：本地 assets/参考集 API；B：项目内管理与选择器 UI | #7 合并；B 等 A 合并；与 #8 对齐快照语义 |
 | [#10 · Lightweight edit/export](https://github.com/skaiy/h3.c-studio/issues/10) | 规划中 | A：edit manifest、后端导出与 fixture 测试；B：最小 trim/配乐 UI | #7、#8 的选定 take 语义合并；B 等 A 合并 |
 | [#11 · Song Storyboard](https://github.com/skaiy/h3.c-studio/issues/11) | 规划中，仅可行性实验 | 小型离线切段/对齐原型，记录实验结果后再决定产品 UI | 先 #7；产品化前需 #9 参考集与 #10 基础导出契约 |
@@ -27,7 +27,7 @@
 
 ## 数据契约 / Data contracts
 
-以下是跨 PR 的设计约束；#8–#10 字段是**规划契约**，不能视为当前已存在的 schema。
+以下是跨 PR 的设计约束；实际可用性以状态表和 GitHub 合并状态为准，#9–#10 仍是规划 schema。
 
 ### #7：镜头输入与原任务续跑
 
@@ -44,6 +44,7 @@
 - 旧 output 导入为一个 legacy take；无法从历史记录确认的参数/来源明确标为 unknown，不拿当前镜头参数补写，不伪造可复现性。无接力来源与“历史来源未知”必须可区分。
 - 失败/中断属于 job 历史，不冒充成功 take。失败重试保留旧 take 和选择；选择操作不能排队生成，运行中任务完成也不能静默覆盖用户选择。
 - 复制 board/shot 时明确新身份与 take/来源映射；丢失媒体进入缺失/修复状态，不暗中采用其他 take。删除涉及引用时必须有显式处理策略，不能连带删除个人源素材。
+- 后端 PR A 提供镜头 take 列表、bodyless 采用和元数据删除端点；采用返回整板最新投影与连续性状态。删除 take 不删除视频文件，已采用或被 take/job 历史引用的版本返回冲突。前端 PR B 合并前，这些接口不代表 UI 已交付。
 
 ### #9：本地 assets 与参考集快照
 

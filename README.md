@@ -45,7 +45,7 @@
 ### 深度阅读
 
 - [h3.c vs 其他视频生成框架：优劣势分析](docs/h3c-vs-other-stacks.md)——和 SGLang / ComfyUI / VDN / MLX-H3 怎么选
-- [本地个人视频工作流路线图](docs/local-personal-workflow.md)——依赖、PR 拆分、数据契约与验收门槛；#7 为本分支实现，#8–#11 为后续规划，合并状态见 GitHub
+- [本地个人视频工作流路线图](docs/local-personal-workflow.md)——依赖、PR 拆分、数据契约与验收门槛；#7 已合并，#8 后端契约在本分支，UI 与 #9–#11 尚未交付
 
 ### 快速开始
 
@@ -83,6 +83,7 @@ H3_STUDIO_TOKEN=your-secret-token npm run dev
 | 2026-09-14 | 后端加固：pytest 单测套件（#1）、任务持久化重启不丢失（#3）、可选 Bearer token 鉴权（#2） |
 | 2026-09-14 | 吸收 [Henninges/h3-studio](https://github.com/Henninges/h3-studio) 优点：参考音频条件输入、结构化 Context-IR 提示词字段（空字段智能默认值），感谢 Henninges 的分享与热情交流；新增德语作为对他关注本项目的致敬，界面增至五语言 |
 | 2026-09-15 | **本分支（in this branch）**：[P0 #7](https://github.com/skaiy/h3.c-studio/issues/7) 条件输入与结构化提示词持久化、单条/批量共用后端请求构建与预检、按原任务快照安全续跑、保存冲突提示与回归测试；合并状态见关联 PR |
+| 2026-09-16 | **本分支后端（UI 尚未交付）**：[P1 #8](https://github.com/skaiy/h3.c-studio/issues/8) 不可变 take、旧 output 迁移、采用/删除 API、接力来源身份及 stale/missing 状态；前端比较与采用界面留给依赖 PR |
 
 ### 协议
 
@@ -131,7 +132,7 @@ This repository forks h3.c and adds a `studio/` web workbench: a prompt studio, 
 ### Further reading
 
 - [h3.c vs other video generation stacks](docs/h3c-vs-other-stacks.md) — how to choose between h3.c, SGLang, ComfyUI, VDN and MLX-H3
-- [Local personal video workflow roadmap](docs/local-personal-workflow.md) — dependencies, PR splits, data contracts and acceptance gates; #7 is implemented in this branch, #8–#11 are planned; see GitHub for merge status
+- [Local personal video workflow roadmap](docs/local-personal-workflow.md) — dependencies, PR splits, data contracts and acceptance gates; #7 is merged, the #8 backend contract is in this branch, while its UI and #9–#11 are not delivered
 
 ### Quick start
 
@@ -169,6 +170,7 @@ H3_STUDIO_TOKEN=your-secret-token npm run dev
 | 2026-09-14 | Backend hardening: pytest test suite (#1), job persistence across restarts (#3), optional Bearer-token auth (#2) |
 | 2026-09-14 | Absorbed ideas from [Henninges/h3-studio](https://github.com/Henninges/h3-studio): reference-audio conditioning, structured Context-IR prompt fields with smart defaults — thanks to Henninges for sharing and the friendly exchange; added German as a tribute to his attention to this project, 5 languages total |
 | 2026-09-15 | **In this branch**: [P0 #7](https://github.com/skaiy/h3.c-studio/issues/7) conditioning-input and structured-prompt persistence, consistent single/batch server request building and preflight, safe resume from the original job snapshot, save-conflict feedback and regression tests; see the linked PR for merge status |
+| 2026-09-16 | **Backend in this branch (UI not delivered)**: [P1 #8](https://github.com/skaiy/h3.c-studio/issues/8) immutable takes, legacy-output migration, selection/deletion APIs, chain-source identity and stale/missing states; comparison and selection UI remains a dependent PR |
 
 ### Licensing
 
