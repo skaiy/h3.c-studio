@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 """H3 Studio backend — wraps the h3-metal CLI with a job queue and progress API."""
+import hashlib
 import json
 import math
 import os
@@ -16,7 +17,7 @@ from fastapi import FastAPI, Request, UploadFile, File, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 ROOT = Path(__file__).resolve().parent.parent          # studio/
 # Engine directory: repo root by default (fork layout), overridable via env.
@@ -250,6 +251,7 @@ def job_command(job: dict) -> list[str]:
     req: GenRequest = job["request"]
     job_id = job["id"]
     out_name = f"studio-{job_id[:8]}.mp4"
+    job["output_name"] = out_name
     model_dir = job.get("model_dir") or (H3_DIR / "MiniMax-H3-turbo" if req.turbo and (H3_DIR / "MiniMax-H3-turbo").exists() else MODEL_DIR)
     job["model_dir"] = str(model_dir)
     cmd = [str(H3_BIN), "--profile", "-d", str(model_dir), "-p", req.prompt,
@@ -367,6 +369,12 @@ def run_job(job_id: str):
         if job["status"] not in ("cancelled", "interrupted") and jobs.get(job_id) is job:
             rc = proc.wait()
             status = "done" if rc == 0 and job.get("output") else "error"
+            if status == "done" and job.get("target") is not None:
+                expected = job.get("output_name")
+                if (Path(job["output"]).name != expected
+                        or not (OUTPUTS / expected).is_file()):
+                    status = "error"
+                    error = "engine did not produce the managed output file"
     except Exception as e:                                     # noqa: BLE001
         error = str(e)
     finally:
@@ -426,6 +434,22 @@ class PromptFields(BaseModel):
     audio: str = ""
 
 
+class Take(BaseModel):
+    model_config = ConfigDict(frozen=True)
+
+    id: str
+    shot_id: str
+    job_id: str | None
+    output: str
+    created_at: float | None
+    request: dict | None
+    request_unknown: bool = False
+    source_take_id: str | None = None
+    source_unknown: bool = False
+    legacy: bool = False
+    model_name: str | None = None
+
+
 class Shot(BaseModel):
     id: str
     prompt: str
@@ -449,6 +473,8 @@ class Shot(BaseModel):
     status: str = "idle"          # idle / queued / running / done / error / skipped
     output: str | None = None
     job_id: str | None = None
+    takes: list[Take] = Field(default_factory=list)
+    selected_take_id: str | None = None
 
 
 class Board(BaseModel):
@@ -460,6 +486,58 @@ class Board(BaseModel):
     result: str | None = None     # concatenated output name
     createdAt: float = 0.0
     modifiedAt: float = 0.0
+
+
+def managed_output_name(name: str | None) -> bool:
+    return bool(name and Path(name).name == name and Path(name).suffix == ".mp4")
+
+
+def legacy_take(board: dict, shot: dict) -> dict | None:
+    output = shot.get("output")
+    if not managed_output_name(output):
+        return None
+    identity = f"{board['id']}\0{shot['id']}\0{output}".encode()
+    take_id = "legacy-" + hashlib.sha256(identity).hexdigest()[:16]
+    return Take(id=take_id, shot_id=shot["id"], job_id=None, output=output,
+                created_at=None, request=None,
+                request_unknown=True, source_unknown=True, legacy=True).model_dump()
+
+
+def normalize_shot_history(board: dict, shot: dict):
+    shot["takes"] = [Take(**take).model_dump() for take in shot.get("takes", [])]
+    if not shot["takes"]:
+        migrated = legacy_take(board, shot)
+        if migrated:
+            shot["takes"] = [migrated]
+            shot["selected_take_id"] = migrated["id"]
+    shot.setdefault("selected_take_id", None)
+    project_selected_output(shot)
+
+
+def selected_take(shot: dict) -> dict | None:
+    selected_id = shot.get("selected_take_id")
+    return next((take for take in shot.get("takes", [])
+                 if take["id"] == selected_id), None)
+
+
+def project_selected_output(shot: dict):
+    take = selected_take(shot)
+    shot["output"] = take["output"] if take else None
+
+
+def take_missing(take: dict) -> bool:
+    return not managed_output_name(take.get("output")) or not (OUTPUTS / take["output"]).is_file()
+
+
+def take_is_referenced(take_id: str) -> bool:
+    return (any(take.get("source_take_id") == take_id for board in boards.values()
+                for shot in board["shots"] for take in shot.get("takes", []))
+            or any(job.get("source_take_id") == take_id for job in jobs.values()))
+
+
+def selected_take_sequence(board: dict) -> list[tuple[str, str]]:
+    return [(shot["id"], shot["selected_take_id"]) for shot in board["shots"]
+            if selected_take(shot) is not None]
 
 
 def load_boards() -> dict[str, dict]:
@@ -478,6 +556,7 @@ def load_boards() -> dict[str, dict]:
                 if shot["prompt_fields"] is not None:
                     shot["prompt_fields"] = {**PromptFields().model_dump(), **shot["prompt_fields"]}
                 shot.setdefault("_instance_id", uuid.uuid4().hex)
+                normalize_shot_history(board, shot)
                 if shot["status"] in ACTIVE:
                     shot["status"] = "interrupted"
             if board["status"] in ACTIVE:
@@ -493,9 +572,35 @@ boards = load_boards()
 
 def public_board(board: dict) -> dict:
     # Defaults are applied on load, not strict generation validation.
+    all_takes = {take["id"]: take for shot in board["shots"] for take in shot.get("takes", [])}
+    selected = {shot["id"]: shot.get("selected_take_id") for shot in board["shots"]}
+
+    def continuity(take: dict, visiting: set[str]) -> str:
+        if take_missing(take) or take["id"] in visiting:
+            return "stale"
+        if take.get("source_unknown"):
+            return "unknown"
+        source_id = take.get("source_take_id")
+        if source_id is None:
+            return "current"
+        source = all_takes.get(source_id)
+        if source is None or selected.get(source["shot_id"]) != source_id:
+            return "stale"
+        source_state = continuity(source, visiting | {take["id"]})
+        return source_state if source_state in ("stale", "unknown") else "current"
+
+    public_shots = []
+    for shot in board["shots"]:
+        item = {k: v for k, v in shot.items() if not k.startswith("_")}
+        item["takes"] = [{**take, "missing": take_missing(take)}
+                         for take in shot.get("takes", [])]
+        take = selected_take(shot)
+        state = continuity(take, set()) if take else "none"
+        item.update(continuity_state=state, stale=state == "stale",
+                    output_missing=bool(take and take_missing(take)))
+        public_shots.append(item)
     return {**{k: v for k, v in board.items() if not k.startswith("_")},
-            "shots": [{k: v for k, v in shot.items() if not k.startswith("_")}
-                      for shot in board["shots"]]}
+            "shots": public_shots}
 
 
 def target_shot(req: GenRequest) -> tuple[dict, dict] | None:
@@ -546,7 +651,20 @@ def writeback_job(job: dict):
     board, shot = target
     shot["status"] = job["status"]
     if job["status"] == "done" and job.get("output"):
-        shot["output"] = Path(job["output"]).name
+        take_id = "take-" + job["id"]
+        if not any(take["id"] == take_id for take in shot["takes"]):
+            take = Take(
+                id=take_id, shot_id=shot["id"], job_id=job["id"],
+                output=job["output_name"], created_at=job["finished"],
+                request=job["request"].model_dump(),
+                source_take_id=job.get("source_take_id"),
+                source_unknown=job.get("source_unknown", False),
+                legacy=False, model_name=Path(job["model_dir"]).name)
+            shot["takes"].append(take.model_dump())
+        job["take_id"] = take_id
+        if shot.get("selected_take_id") == job.get("selection_at_submit"):
+            shot["selected_take_id"] = take_id
+        project_selected_output(shot)
     if not board.get("_run_id"):
         board["status"] = ("running" if job["status"] in ACTIVE else
                            "done" if job["status"] == "done" else "error")
@@ -562,28 +680,33 @@ def shot_request(board: dict, shot: dict) -> GenRequest:
                       label=f"[{board['name']}] 镜头 {index + 1}")
 
 
-def chain_source(board: dict, req: GenRequest, previous_output: str | None) -> str | None:
+def chain_source(board: dict, req: GenRequest, previous_take: dict | None) -> dict | None:
     if board["chain"] and not req.first_frame and not req.ref_images and not req.ref_audio:
-        return previous_output
+        return previous_take
     return None
 
 
-def enqueue_job(req: GenRequest, *, source: str | None = None, model_dir: str | None = None) -> dict:
+def enqueue_job(req: GenRequest, *, source: dict | None = None,
+                source_take_id: str | None = None, source_unknown: bool = False,
+                model_dir: str | None = None) -> dict:
     """Caller holds lock and has checked target ownership/board reservation."""
     warnings = preflight(req)
     if source:
-        resolve_file(source, outputs_only=True)
+        resolve_file(source["output"], outputs_only=True)
     target = target_shot(req)
     job_id = uuid.uuid4().hex[:12]
     job = {"id": job_id, "request": req.model_copy(deep=True), "status": "queued",
            "created": time.time(), "log": [f"warning: {w}" for w in warnings],
            "phase": None, "done": 0, "total": 0, "label": req.label or req.prompt[:40],
-           "warnings": warnings, "chain_source": source}
+           "warnings": warnings, "chain_source": source["output"] if source else None,
+           "source_take_id": source["id"] if source else source_take_id,
+           "source_unknown": source_unknown}
     if model_dir:
         job["model_dir"] = model_dir
     if target:
         board, shot = target
         job["target"] = target_identity(board, shot)
+        job["selection_at_submit"] = shot.get("selected_take_id")
         # A failed retry must not remove the last usable clip from this shot.
         shot.update(status="queued", job_id=job_id)
         board["status"] = "running"
@@ -616,7 +739,7 @@ def board_run_worker(board_id: str, run_id: str):
     board = boards.get(board_id)
     shot = None
     try:
-        prev_output = None
+        previous_take = None
         for shot in board["shots"]:
             with lock:
                 if boards.get(board_id) is not board or board.get("_run_id") != run_id:
@@ -626,7 +749,7 @@ def board_run_worker(board_id: str, run_id: str):
                     save_boards()
                     continue
                 req = shot_request(board, shot)
-                result = enqueue_job(req, source=chain_source(board, req, prev_output))
+                result = enqueue_job(req, source=chain_source(board, req, previous_take))
                 job_id = result["job_id"]
             launch_next()
             while True:
@@ -639,7 +762,8 @@ def board_run_worker(board_id: str, run_id: str):
                 time.sleep(0.05)
             if job is None or job["status"] != "done":
                 raise RuntimeError(f"shot generation {job['status'] if job else 'interrupted'}")
-            prev_output = Path(job["output"]).name
+            previous_take = next(take for take in shot["takes"]
+                                 if take["id"] == job["take_id"])
         with lock:
             if boards.get(board_id) is board and board.get("_run_id") == run_id:
                 board["status"] = "done"
@@ -704,15 +828,31 @@ def upsert_board(board: Board):
         if previous:
             # Status/output/job ownership belong to the backend, not autosave.
             updated["status"], updated["result"] = previous["status"], previous.get("result")
+            retained_ids = {shot["id"] for shot in updated["shots"]}
+            removed_takes = [take["id"] for shot in previous["shots"]
+                             if shot["id"] not in retained_ids
+                             for take in shot.get("takes", [])]
+            if any(take_is_referenced(take_id) for take_id in removed_takes):
+                raise HTTPException(409, "cannot remove a shot with referenced take history")
         prior_shots = {s["id"]: s for s in previous["shots"]} if previous else {}
         for shot in updated["shots"]:
             prior = prior_shots.get(shot["id"])
             shot["_instance_id"] = prior["_instance_id"] if prior else uuid.uuid4().hex
             if prior:
-                for field in ("status", "output", "job_id"):
+                for field in ("status", "output", "job_id", "takes", "selected_take_id"):
                     shot[field] = prior.get(field)
             elif previous:
-                shot.update(status="idle", output=None, job_id=None)
+                shot.update(status="idle", output=None, job_id=None, takes=[],
+                            selected_take_id=None)
+            else:
+                # Initial output-only imports are legacy history; supplied take
+                # metadata and runtime ownership are never accepted from clients.
+                shot["takes"] = []
+                shot["selected_take_id"] = None
+                shot["job_id"] = None
+                normalize_shot_history(updated, shot)
+        if previous and selected_take_sequence(updated) != selected_take_sequence(previous):
+            updated["result"] = None
         boards[board.id] = updated
         save_boards()
         return public_board(updated)
@@ -725,7 +865,8 @@ def duplicate_board(board_id: str):
         if not src:
             raise HTTPException(404)
         now = time.time()
-        copy = json.loads(json.dumps(public_board(src)))
+        copy = json.loads(json.dumps(src))
+        copy.pop("_run_id", None)
         copy.pop("error", None)
         copy["id"] = uuid.uuid4().hex[:8]
         copy["name"] = src["name"] + " 副本"
@@ -738,6 +879,8 @@ def duplicate_board(board_id: str):
             s["status"] = "idle"
             s["output"] = None
             s["job_id"] = None
+            s["takes"] = []
+            s["selected_take_id"] = None
         boards[copy["id"]] = copy
         save_boards()
         return public_board(copy)
@@ -796,10 +939,59 @@ def generate_shot(board_id: str, shot_id: str):
         req = shot_request(board, shot)
         index = board["shots"].index(shot)
         previous = next((s for s in reversed(board["shots"][:index]) if s["prompt"].strip()), None)
-        source = chain_source(board, req, previous.get("output") if previous else None)
+        source = chain_source(board, req, selected_take(previous) if previous else None)
         result = enqueue_job(req, source=source)
     launch_next()
     return result
+
+
+@app.get("/api/boards/{board_id}/shots/{shot_id}/takes")
+def get_takes(board_id: str, shot_id: str):
+    with lock:
+        board, shot = target_shot(GenRequest(
+            prompt="", board_id=board_id, shot_id=shot_id))
+        public = public_board(board)
+        return next(item["takes"] for item in public["shots"]
+                    if item["id"] == shot["id"])
+
+
+@app.post("/api/boards/{board_id}/shots/{shot_id}/takes/{take_id}/select")
+def select_shot_take(board_id: str, shot_id: str, take_id: str):
+    with lock:
+        board, shot = target_shot(GenRequest(
+            prompt="", board_id=board_id, shot_id=shot_id))
+        require_idle(board)
+        take = next((item for item in shot["takes"] if item["id"] == take_id), None)
+        if take is None:
+            raise HTTPException(404, "take not found")
+        if take_missing(take):
+            raise HTTPException(409, "take output is missing")
+        if shot.get("selected_take_id") != take_id:
+            shot["selected_take_id"] = take_id
+            project_selected_output(shot)
+            board["result"] = None
+            board["modifiedAt"] = time.time()
+            save_boards()
+        return public_board(board)
+
+
+@app.delete("/api/boards/{board_id}/shots/{shot_id}/takes/{take_id}")
+def delete_shot_take(board_id: str, shot_id: str, take_id: str):
+    with lock:
+        board, shot = target_shot(GenRequest(
+            prompt="", board_id=board_id, shot_id=shot_id))
+        require_idle(board)
+        take = next((item for item in shot["takes"] if item["id"] == take_id), None)
+        if take is None:
+            raise HTTPException(404, "take not found")
+        if shot.get("selected_take_id") == take_id:
+            raise HTTPException(409, "cannot delete the selected take")
+        if take_is_referenced(take_id):
+            raise HTTPException(409, "cannot delete a take referenced by take history")
+        shot["takes"] = [item for item in shot["takes"] if item["id"] != take_id]
+        board["modifiedAt"] = time.time()
+        save_boards()
+        return public_board(board)
 
 
 @app.post("/api/boards/{board_id}/concat")
@@ -810,7 +1002,10 @@ def concat_board(board_id: str):
             raise HTTPException(404)
         require_idle(board)
         revision = board["modifiedAt"]
-        outputs = [s["output"] for s in board["shots"] if s.get("output")]
+        selected = [selected_take(shot) for shot in board["shots"]]
+        outputs = [take["output"] for take in selected if take is not None]
+        for output in outputs:
+            resolve_file(output, outputs_only=True)
     if len(outputs) < 2:
         raise HTTPException(400, "need at least 2 finished shots")
     list_file = UPLOADS / f"concat-{board_id}.txt"
@@ -884,7 +1079,12 @@ def resume_job(job_id: str):
         if ((original.get("target") is not None and original["target"] != target_identity(board, shot))
                 or shot.get("job_id") != job_id):
             raise HTTPException(409, "original target was replaced or has a newer job")
-        result = enqueue_job(req, model_dir=original.get("model_dir"))
+        source_take_id = original.get("source_take_id")
+        source_unknown = bool(original.get("source_unknown") or
+                              (original.get("chain_source") and not source_take_id))
+        result = enqueue_job(req, source_take_id=source_take_id,
+                             source_unknown=source_unknown,
+                             model_dir=original.get("model_dir"))
     launch_next()
     return result
 
@@ -937,6 +1137,8 @@ def public_job(j: dict) -> dict:
             "created": j["created"], "started": j.get("started"),
             "finished": j.get("finished"), "output": j.get("output"),
             "checkpoint": j.get("checkpoint"),
+            "take_id": j.get("take_id"), "source_take_id": j.get("source_take_id"),
+            "source_unknown": j.get("source_unknown", False),
             **({"warnings": j["warnings"]} if j.get("warnings") else {}),
             "params": req.model_dump(exclude={"prompt"})}
 
@@ -986,10 +1188,14 @@ def media(name: str):
 def delete_video(name: str):
     if "/" in name or ".." in name:
         raise HTTPException(400, "invalid name")
-    target = OUTPUTS / name
-    if not target.exists() or target.suffix != ".mp4":
-        raise HTTPException(404)
-    target.unlink()
+    with lock:
+        if any(take["output"] == name for board in boards.values()
+               for shot in board["shots"] for take in shot.get("takes", [])):
+            raise HTTPException(409, "video is referenced by take history")
+        target = OUTPUTS / name
+        if not target.exists() or target.suffix != ".mp4":
+            raise HTTPException(404)
+        target.unlink()
     return {"ok": True}
 
 
