@@ -1,7 +1,7 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
 import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { api, ApiError, type Board, type BoardSummary, type Job, type Shot, type Take, type VideoItem } from '@/lib/api'
+import { api, ApiError, type Board, type BoardSummary, type Job, type ReferenceAsset, type ReferenceSnapshot, type Shot, type Take, type VideoItem } from '@/lib/api'
 import { translate, type StudioI18nKey } from '@/lib/i18nResources'
 import Workspace from './Workspace'
 
@@ -1193,5 +1193,450 @@ describe('Workspace take integration through the real route', () => {
     expect(api.generateShot).not.toHaveBeenCalled()
     expect(fetchMock).not.toHaveBeenCalled()
     expectNoQueue()
+  })
+})
+
+describe('Workspace reference integration through the real route', () => {
+  function referenceBoard(id = 'b1', overrides: Partial<Board> = {}): Board {
+    const assets: ReferenceAsset[] = [
+      { id: 'portrait', filename: 'portrait.png', kind: 'image', size: 100, sha256: 'a'.repeat(64), created_at: 1, width: 512, height: 512 },
+      { id: 'wide', filename: 'wide #1.png', kind: 'image', size: 200, sha256: 'b'.repeat(64), created_at: 2, width: 768, height: 512 },
+      { id: 'voice', filename: 'voice.wav', kind: 'audio', size: 300, sha256: 'c'.repeat(64), created_at: 3, duration: 4 },
+    ]
+    return board(id, {
+      assets, reference_sets: [{
+        id: 'cast /#?', name: 'River cast', kind: 'character', notes: 'Keep the listed reference order',
+        revision: 3, image_asset_ids: ['wide', 'portrait'], audio_asset_ids: ['voice'],
+      }], ...overrides,
+    })
+  }
+
+  function snapshotFor(b: Board): ReferenceSnapshot {
+    const set = b.reference_sets![0]
+    return clone({
+      source_board_id: b.id, set_id: set.id, set_revision: set.revision, set_name: set.name,
+      images: set.image_asset_ids.map((id) => b.assets!.find((asset) => asset.id === id)!),
+      audio: set.audio_asset_ids.map((id) => b.assets!.find((asset) => asset.id === id)!),
+    })
+  }
+
+  function referenceInputs(snapshot: ReferenceSnapshot): Partial<Shot> {
+    return {
+      ref_images: snapshot.images.map((asset) => asset.filename), ref_audio: snapshot.audio.map((asset) => asset.filename),
+      reference_snapshot: clone(snapshot), reference_snapshot_missing: false,
+    }
+  }
+
+  function applyOnServer(boardId: string, shotId: string): Board {
+    return updateServerShot(boardId, shotId, referenceInputs(snapshotFor(server.get(boardId)!)))
+  }
+
+  function chooseSet(b: Board) {
+    fireEvent.change(screen.getByRole('combobox', { name: t('referenceChooseSet') }), { target: { value: b.reference_sets![0].id } })
+  }
+
+  function applySet() { fireEvent.click(screen.getByRole('button', { name: t('referenceApply') })) }
+
+  function expectNoTakeOrGenerationWrites() {
+    expect(api.selectTake).not.toHaveBeenCalled()
+    expect(api.deleteTake).not.toHaveBeenCalled()
+    expect(api.generateShot).not.toHaveBeenCalled()
+    expect(api.resumeJob).not.toHaveBeenCalled()
+    expect(api.concatBoard).not.toHaveBeenCalled()
+    expectNoQueue()
+  }
+
+  beforeEach(() => {
+    // Keep the real HTTP implementations: these tests exercise the wire contract too.
+    vi.spyOn(api, 'applyReferenceSet')
+    vi.spyOn(api, 'upload')
+    vi.spyOn(api, 'importReferenceAsset')
+    vi.spyOn(api, 'updateReferenceSet')
+    vi.spyOn(api, 'createReferenceSet')
+  })
+
+  it('flushes a dirty shot before the encoded apply POST with the exact saved board and displayed set revisions', async () => {
+    const id = 'board #1', shotId = 'shot /?'
+    const original = referenceBoard(id, { shots: [shot(shotId, { ref_images: ['manual.png'], ref_audio: ['manual.wav'] })] })
+    server.set(id, clone(original))
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const pendingSave = deferred<Board>(), pendingApply = deferred<Response>()
+    vi.mocked(api.saveBoard).mockReturnValueOnce(pendingSave.promise)
+    fetchMock.mockReturnValueOnce(pendingApply.promise)
+    await mountWorkspace(id)
+    editPrompt('Save this prompt before applying references')
+    chooseSet(original)
+    applySet()
+    await settle()
+    expect(confirm).toHaveBeenCalledExactlyOnceWith(t('referenceReplaceConfirm'))
+    expect(api.saveBoard).toHaveBeenCalledOnce()
+    const submitted = vi.mocked(api.saveBoard).mock.calls[0][0]
+    expect(submitted).toMatchObject({ id, modifiedAt: 10, shots: [expect.objectContaining({ id: shotId, prompt: 'Save this prompt before applying references' })] })
+    expect(api.applyReferenceSet).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(screen.getByRole('button', { name: t('referenceApply') })).toBeDisabled()
+    await act(async () => { pendingSave.resolve(persist(submitted)) })
+    expect(api.applyReferenceSet).toHaveBeenCalledExactlyOnceWith(id, shotId, 'cast /#?', 11, 3, true)
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith(
+      '/api/boards/board%20%231/shots/shot%20%2F%3F/reference-sets/cast%20%2F%23%3F/apply', expect.objectContaining({ method: 'POST' }),
+    )
+    const request = fetchMock.mock.calls[0][1]!
+    expect(new Headers(request.headers).get('Content-Type')).toBe('application/json')
+    expect(JSON.parse(request.body as string)).toEqual({ expected_board_revision: 11, expected_set_revision: 3, replace_existing: true })
+    expect(screen.getByTestId('reference-shot-snapshot')).toHaveTextContent(t('referenceNoSnapshot'))
+    expect(screen.getByRole('img', { name: t('refImages') })).toHaveAttribute('src', '/api/media/manual.png')
+    const stale = clone(server.get(id)!)
+    vi.mocked(api.board).mockResolvedValue(stale)
+    await act(async () => { pendingApply.resolve(jsonResponse(applyOnServer(id, shotId))) })
+    await tick(5000)
+    expect(screen.getByTestId('reference-shot-snapshot')).toHaveTextContent('River cast')
+    expect(screen.getAllByRole('img', { name: t('refImages') }).map((image) => image.getAttribute('src')))
+      .toEqual(['/api/media/wide%20%231.png', '/api/media/portrait.png'])
+    expect(screen.getByRole('textbox', { name: t('prompt') })).toHaveValue('Save this prompt before applying references')
+    expect(server.get(id)?.shots[0]).toMatchObject(referenceInputs(snapshotFor(original)))
+    expect(api.saveBoard).toHaveBeenCalledOnce()
+    expect(api.applyReferenceSet).toHaveBeenCalledOnce()
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expectNoTakeOrGenerationWrites()
+  })
+
+  it('applies references without changing structured prompts, seed, historical snapshots, adoption or an old-take preview', async () => {
+    const original = referenceBoard()
+    const historical = { ...snapshotFor(original), set_name: 'Historical cast', set_revision: 1 }
+    const fields = { scene: 'River at dawn', action: 'Boat drifts', camera: 'Slow pan', look: 'Soft light', audio: 'Birdsong' }
+    const s = takenShot('b1-s1', {
+      prompt_mode: 'structured', prompt_fields: fields, seed: 876543,
+      prompt: 'Scene: River at dawn. Action: Boat drifts. Camera: Slow pan. Look: Soft light. Audio: Birdsong.',
+    })
+    s.takes![0].reference_snapshot = clone(historical)
+    original.shots = [s]
+    original.result = 'assembled.mp4'
+    server.set('b1', clone(original))
+    fetchMock.mockImplementationOnce(async () => jsonResponse(applyOnServer('b1', s.id)))
+    const { container } = await mountWorkspace()
+    const [old, adopted] = s.takes!
+    fireEvent.click(takeControl(old.id, 'play', 1))
+    chooseSet(original)
+    await tick(2500)
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(server.get('b1')).toEqual(original)
+    applySet()
+    await settle()
+    await tick(5000)
+    const labels = { scene: 'promptFieldScene', action: 'promptFieldAction', camera: 'promptFieldCamera', look: 'promptFieldLook', audio: 'promptFieldAudio' } as const
+    for (const key of Object.keys(fields) as (keyof typeof fields)[]) {
+      expect(screen.getByRole('textbox', { name: t(labels[key]) })).toHaveValue(fields[key])
+    }
+    expect(screen.getByDisplayValue('876543')).toHaveValue(876543)
+    expect(container.querySelector('video[controls]')).toHaveAttribute('src', `/outputs/${old.output}`)
+    expect(screen.getByRole('button', { name: t('takeReturnSelected') })).toBeInTheDocument()
+    expect(within(screen.getByTestId(`take-${adopted.id}`)).getByText(t('takeSelected'))).toBeInTheDocument()
+    fireEvent.click(within(screen.getByTestId(`take-${old.id}`)).getByText(t('takeSnapshot')))
+    expect(within(screen.getByTestId(`take-${old.id}`)).getByText('Historical cast')).toBeInTheDocument()
+    expect(within(screen.getByTestId(`take-${old.id}`)).getByText(t('prompt'), { selector: 'dt' }).nextElementSibling)
+      .toHaveTextContent(`Historical prompt ${old.id}`)
+    expect(server.get('b1')).toEqual({
+      ...original, modifiedAt: 11, shots: [{ ...s, ...referenceInputs(snapshotFor(original)) }],
+    })
+    expect(api.applyReferenceSet).toHaveBeenCalledExactlyOnceWith('b1', s.id, 'cast /#?', 10, 3, false)
+    expect(JSON.parse(fetchMock.mock.calls[0][1]!.body as string))
+      .toEqual({ expected_board_revision: 10, expected_set_revision: 3, replace_existing: false })
+    expect(api.saveBoard).not.toHaveBeenCalled()
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expectNoTakeOrGenerationWrites()
+  })
+
+  it.each([409, 503])('keeps a %s apply error in one global alert through polls and read recovery without replaying the write', async (status) => {
+    const original = referenceBoard('b1', { shots: [takenShot('b1-s1')] })
+    server.set('b1', clone(original))
+    fetchMock.mockResolvedValueOnce(jsonResponse({ detail: 'Reference apply rejected' }, status))
+    const { container } = await mountWorkspace()
+    const old = original.shots[0].takes![0]
+    fireEvent.click(takeControl(old.id, 'play', 1))
+    chooseSet(original)
+    applySet()
+    await settle()
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(screen.getByRole('alert')).toHaveTextContent(`${status} Reference apply rejected`)
+    const reads = vi.mocked(api.board).mock.calls.length
+    await tick(5000)
+    expect(api.board).toHaveBeenCalledTimes(reads + 2)
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(screen.getByRole('alert')).toHaveTextContent(`${status} Reference apply rejected`)
+    vi.mocked(api.board).mockRejectedValueOnce(new ApiError(503, 'Recovery read failed'))
+    await tick(2500)
+    fireEvent.click(screen.getByRole('button', { name: t('retryLoad') }))
+    await settle()
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(screen.getByRole('alert')).toHaveTextContent(`${status} Reference apply rejected`)
+    expect(screen.getByRole('combobox', { name: t('referenceChooseSet') })).toHaveValue('cast /#?')
+    expect(screen.getByTestId('reference-shot-snapshot')).toHaveTextContent(t('referenceNoSnapshot'))
+    expect(container.querySelector('video[controls]')).toHaveAttribute('src', `/outputs/${old.output}`)
+    expect(server.get('b1')).toEqual(original)
+    expect(api.applyReferenceSet).toHaveBeenCalledExactlyOnceWith('b1', 'b1-s1', 'cast /#?', 10, 3, false)
+    expect(api.saveBoard).not.toHaveBeenCalled()
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expectNoTakeOrGenerationWrites()
+  })
+
+  it('blocks apply after a failed draft save, retains the prompt, and does not replay apply after an explicit save retry', async () => {
+    const original = referenceBoard()
+    server.set('b1', clone(original))
+    vi.mocked(api.saveBoard).mockRejectedValueOnce(new ApiError(503, persistenceDetail))
+    await mountWorkspace()
+    editPrompt('Keep this unsaved reference shot prompt')
+    chooseSet(original)
+    applySet()
+    await settle()
+    await tick(5000)
+    expect(screen.getAllByRole('alert')).toHaveLength(1)
+    expect(screen.getByRole('alert')).toHaveTextContent(`503 ${persistenceDetail}`)
+    expect(screen.getByRole('textbox', { name: t('prompt') })).toHaveValue('Keep this unsaved reference shot prompt')
+    expect(api.saveBoard).toHaveBeenCalledOnce()
+    expect(api.applyReferenceSet).not.toHaveBeenCalled()
+    expect(server.get('b1')).toEqual(original)
+    fireEvent.click(screen.getByRole('button', { name: t('retrySave') }))
+    await settle()
+    await tick(5000)
+    expect(api.saveBoard).toHaveBeenCalledTimes(2)
+    expect(server.get('b1')?.shots[0].prompt).toBe('Keep this unsaved reference shot prompt')
+    expect(screen.getByRole('combobox', { name: t('referenceChooseSet') })).toHaveValue('cast /#?')
+    expect(screen.getByTestId('reference-shot-snapshot')).toHaveTextContent(t('referenceNoSnapshot'))
+    // Retrying the save is not retrying apply; the picker may still remind us it never applied.
+    expect(screen.queryByRole('button', { name: t('retrySave') })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: t('referenceApply') })).toBeEnabled()
+    expect(api.applyReferenceSet).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expectNoTakeOrGenerationWrites()
+  })
+
+  it.each(['shot', 'board'] as const)('applies a late response only to its original target after %s navigation without preview theft or duplicate keys', async (navigation) => {
+    const consoleError = vi.spyOn(console, 'error')
+    const original = referenceBoard('b1', { shots: [takenShot('b1-s1'), takenShot('b1-s2')] })
+    const other = referenceBoard('b2', { shots: [takenShot('b2-s1'), takenShot('b2-s2')] })
+    server.set('b1', clone(original))
+    server.set('b2', clone(other))
+    videos = [{ name: 'reference-navigation.mp4', size: 10, mtime: 1, duration: 5 }]
+    const pending = deferred<Response>()
+    fetchMock.mockReturnValueOnce(pending.promise)
+    const { container } = await mountWorkspace()
+    chooseSet(original)
+    applySet()
+    await settle()
+    expect(api.applyReferenceSet).toHaveBeenCalledExactlyOnceWith('b1', 'b1-s1', 'cast /#?', 10, 3, false)
+    fireEvent.click(screen.getByTestId('shot-card-1'))
+    if (navigation === 'board') {
+      await switchBoard('b1', 'b2')
+      fireEvent.click(screen.getByTestId('shot-card-1'))
+    }
+    fireEvent.click(screen.getAllByRole('button', { name: `${t('play')} · reference-navigation.mp4` })[0])
+    await act(async () => { pending.resolve(jsonResponse(applyOnServer('b1', 'b1-s1'))) })
+    await tick(5000)
+    const current = navigation === 'board' ? other.shots[1] : original.shots[1]
+    expect(screen.getByRole('textbox', { name: t('prompt') })).toHaveValue(current.prompt)
+    expect(container.querySelector('video[controls]')).toHaveAttribute('src', '/outputs/reference-navigation.mp4')
+    expect(screen.getAllByTestId('reference-shot-snapshot')).toHaveLength(1)
+    expect(screen.getByTestId('reference-shot-snapshot')).toHaveTextContent(t('referenceNoSnapshot'))
+    expect(screen.getAllByRole('list', { name: t('takeHistory') })).toHaveLength(1)
+    expect(within(screen.getByTestId(`take-${current.selected_take_id}`)).getByText(t('takeSelected'))).toBeInTheDocument()
+    expect(server.get('b1')?.shots[1]).toEqual(original.shots[1])
+    expect(server.get('b2')).toEqual(other)
+    vi.mocked(api.board).mockImplementation(async (id) => clone(id === 'b1' ? original : server.get(id)!))
+    if (navigation === 'board') await switchBoard('b2', 'b1')
+    else fireEvent.click(screen.getByTestId('shot-card-0'))
+    await tick(2500)
+    expect(screen.getByTestId('reference-shot-snapshot')).toHaveTextContent('River cast')
+    expect(container.querySelector('video[controls]')).toHaveAttribute('src', `/outputs/${original.shots[0].output}`)
+    expect(server.get('b1')?.shots[0]).toEqual({ ...original.shots[0], ...referenceInputs(snapshotFor(original)) })
+    expect(consoleError.mock.calls.filter((args) => args.some((arg) => typeof arg === 'string' && /same key|unique.*key/i.test(arg)))).toEqual([])
+    expect(api.applyReferenceSet).toHaveBeenCalledOnce()
+    expect(api.saveBoard).not.toHaveBeenCalled()
+    expect(fetchMock).toHaveBeenCalledOnce()
+    expectNoTakeOrGenerationWrites()
+  })
+
+  it.each(['image', 'audio'] as const)('immediately clears only shot provenance on a manual %s removal and never restores it from a poll or save', async (kind) => {
+    const original = referenceBoard()
+    const applied = snapshotFor(original), historical = { ...applied, set_name: 'Historical cast', set_revision: 1 }
+    const s = takenShot('b1-s1', { ...referenceInputs(applied), reference_snapshot_missing: true })
+    s.takes![0].reference_snapshot = clone(historical)
+    original.shots = [s, takenShot('b1-s2', referenceInputs(applied))]
+    server.set('b1', clone(original))
+    await mountWorkspace()
+    const oldCard = screen.getByTestId(`take-${s.takes![0].id}`)
+    fireEvent.click(within(oldCard).getByText(t('takeSnapshot')))
+    expect(screen.getByTestId('reference-shot-snapshot')).toHaveTextContent(t('referenceMissing'))
+    await tick(2250)
+    const file = kind === 'image'
+      ? screen.getAllByRole('img', { name: t('refImages') })[0]
+      : screen.getByLabelText(t('refAudio'), { selector: 'input' }).parentElement!.querySelector('audio')!
+    fireEvent.click(within(file.parentElement!).getByRole('button', { name: t('remove') }))
+    expect(screen.getByTestId('reference-shot-snapshot')).toHaveTextContent(t('referenceNoSnapshot'))
+    expect(screen.getByTestId('reference-shot-snapshot')).not.toHaveTextContent('River cast')
+    expect(within(oldCard).getByText('Historical cast')).toBeInTheDocument()
+    expect(api.saveBoard).not.toHaveBeenCalled()
+    await tick(250)
+    expect(screen.getByTestId('reference-shot-snapshot')).toHaveTextContent(t('referenceNoSnapshot'))
+    expect(api.saveBoard).not.toHaveBeenCalled()
+    await tick(550)
+    expect(api.saveBoard).toHaveBeenCalledOnce()
+    const expected = {
+      ...s, ref_images: kind === 'image' ? ['portrait.png'] : s.ref_images,
+      ref_audio: kind === 'audio' ? [] : s.ref_audio, reference_snapshot: null, reference_snapshot_missing: false,
+    }
+    expect(vi.mocked(api.saveBoard).mock.calls[0][0].shots[0]).toEqual(expected)
+    expect(server.get('b1')?.shots).toEqual([expected, original.shots[1]])
+    vi.mocked(api.board).mockResolvedValue(clone(original))
+    await tick(5000)
+    expect(screen.getByTestId('reference-shot-snapshot')).toHaveTextContent(t('referenceNoSnapshot'))
+    expect(within(oldCard).getByText('Historical cast')).toBeInTheDocument()
+    expect(server.get('b1')?.shots[0].takes).toEqual(s.takes)
+    fireEvent.click(screen.getByTestId('shot-card-1'))
+    expect(screen.getByTestId('reference-shot-snapshot')).toHaveTextContent('River cast')
+    fireEvent.click(screen.getByTestId('shot-card-0'))
+    expect(screen.getByTestId('reference-shot-snapshot')).toHaveTextContent(t('referenceNoSnapshot'))
+    expect(api.saveBoard).toHaveBeenCalledOnce()
+    expect(api.applyReferenceSet).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expectNoTakeOrGenerationWrites()
+  })
+
+  it('retains the dirty manager editor and original set revision through newer polls, read failure and recovery', async () => {
+    const original = referenceBoard()
+    server.set('b1', clone(original))
+    await mountWorkspace()
+    fireEvent.click(screen.getByRole('button', { name: t('referenceManage') }))
+    const dialog = within(screen.getByRole('dialog', { name: t('referenceTitle') }))
+    fireEvent.click(within(dialog.getByTestId('reference-set-cast /#?')).getByRole('button', { name: t('referenceEdit') }))
+    fireEvent.change(dialog.getByRole('textbox', { name: t('referenceName') }), { target: { value: 'Unsaved local cast' } })
+    fireEvent.change(dialog.getByRole('textbox', { name: t('referenceNotes') }), { target: { value: 'Local notes must survive recovery' } })
+    updateServerShot('b1', 'b1-s1', {}, { reference_sets: [{ ...original.reference_sets![0], name: 'Another writer', revision: 4 }] })
+    await tick(2500)
+    expect(dialog.getByText(t('referenceConflict'))).toBeInTheDocument()
+    expect(dialog.getByRole('textbox', { name: t('referenceName') })).toHaveValue('Unsaved local cast')
+    vi.mocked(api.board).mockRejectedValueOnce(new ApiError(503, persistenceDetail))
+    await tick(2500)
+    expect(dialog.getByRole('alert')).toHaveTextContent(`503 ${persistenceDetail}`)
+    expect(dialog.getByRole('textbox', { name: t('referenceNotes') })).toHaveValue('Local notes must survive recovery')
+    expect(dialog.getByRole('button', { name: t('referenceSave') })).toBeDisabled()
+    await tick(2500)
+    expect(dialog.queryByRole('alert')).not.toBeInTheDocument()
+    expect(dialog.getByRole('button', { name: t('referenceSave') })).toBeEnabled()
+    expect(dialog.getByRole('textbox', { name: t('referenceName') })).toHaveValue('Unsaved local cast')
+    expect(dialog.getByRole('textbox', { name: t('referenceNotes') })).toHaveValue('Local notes must survive recovery')
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(api.saveBoard).not.toHaveBeenCalled()
+    fetchMock.mockResolvedValueOnce(jsonResponse({ detail: 'Set revision conflict' }, 409))
+    fireEvent.click(dialog.getByRole('button', { name: t('referenceSave') }))
+    await settle()
+    const fields = { name: 'Unsaved local cast', kind: 'character', notes: 'Local notes must survive recovery', image_asset_ids: ['wide', 'portrait'], audio_asset_ids: ['voice'] }
+    expect(api.updateReferenceSet).toHaveBeenCalledExactlyOnceWith('b1', 'cast /#?', fields, 11, 3)
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith('/api/boards/b1/reference-sets/cast%20%2F%23%3F', expect.objectContaining({ method: 'PUT' }))
+    expect(JSON.parse(fetchMock.mock.calls[0][1]!.body as string)).toEqual({ ...fields, expected_board_revision: 11, expected_set_revision: 3 })
+    await tick(5000)
+    expect(dialog.getByRole('alert')).toHaveTextContent('409 Set revision conflict')
+    expect(dialog.getByRole('textbox', { name: t('referenceName') })).toHaveValue('Unsaved local cast')
+    expect(dialog.getByRole('textbox', { name: t('referenceNotes') })).toHaveValue('Local notes must survive recovery')
+    expect(api.updateReferenceSet).toHaveBeenCalledOnce()
+    expect(api.createReferenceSet).not.toHaveBeenCalled()
+    expect(api.saveBoard).not.toHaveBeenCalled()
+    expect(api.applyReferenceSet).not.toHaveBeenCalled()
+    expect(server.get('b1')?.reference_sets![0]).toMatchObject({ name: 'Another writer', revision: 4 })
+    expectNoTakeOrGenerationWrites()
+  })
+
+  it('flushes the draft, uploads multipart media, then registers only the returned filename with the saved revision', async () => {
+    const id = 'board #1', original = referenceBoard(id)
+    server.set(id, clone(original))
+    const pendingSave = deferred<Board>(), pendingUpload = deferred<Response>()
+    vi.mocked(api.saveBoard).mockReturnValueOnce(pendingSave.promise)
+    const imported: ReferenceAsset = { id: 'imported', filename: 'canonical-upload.png', kind: 'image', size: 25, sha256: 'd'.repeat(64), created_at: 4 }
+    fetchMock.mockReturnValueOnce(pendingUpload.promise).mockImplementationOnce(async () => jsonResponse(
+      updateServerShot(id, original.shots[0].id, {}, { assets: [...original.assets!, imported] }),
+    ))
+    await mountWorkspace(id)
+    editPrompt('Flush before importing project media')
+    fireEvent.click(screen.getByRole('button', { name: t('referenceOpen') }))
+    const dialog = within(screen.getByRole('dialog', { name: t('referenceTitle') }))
+    const file = new File(['image fixture'], 'local-name.png', { type: 'image/png' })
+    fireEvent.change(dialog.getByLabelText(t('referenceImportImage')), { target: { files: [file] } })
+    await settle()
+    expect(api.saveBoard).toHaveBeenCalledOnce()
+    expect(api.upload).not.toHaveBeenCalled()
+    expect(api.importReferenceAsset).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+    const submitted = vi.mocked(api.saveBoard).mock.calls[0][0]
+    expect(submitted.shots[0].prompt).toBe('Flush before importing project media')
+    await act(async () => { pendingSave.resolve(persist(submitted)) })
+    expect(api.upload).toHaveBeenCalledExactlyOnceWith(file)
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith('/api/upload', expect.objectContaining({ method: 'POST', body: expect.any(FormData) }))
+    const uploadRequest = fetchMock.mock.calls[0][1]!
+    expect((uploadRequest.body as FormData).get('file')).toBe(file)
+    expect(new Headers(uploadRequest.headers).has('Content-Type')).toBe(false)
+    expect(api.importReferenceAsset).not.toHaveBeenCalled()
+    expect(dialog.getByLabelText(t('referenceImportImage'))).toBeDisabled()
+    await act(async () => { pendingUpload.resolve(jsonResponse({ name: imported.filename })) })
+    expect(api.importReferenceAsset).toHaveBeenCalledExactlyOnceWith(id, imported.filename, 'image', 11)
+    expect(fetchMock).toHaveBeenNthCalledWith(2, '/api/boards/board%20%231/assets', expect.objectContaining({ method: 'POST' }))
+    expect(JSON.parse(fetchMock.mock.calls[1][1]!.body as string))
+      .toEqual({ filename: 'canonical-upload.png', kind: 'image', expected_board_revision: 11 })
+    await tick(5000)
+    expect(dialog.getByTestId('reference-asset-imported')).toHaveTextContent('canonical-upload.png')
+    expect(server.get(id)?.shots[0].prompt).toBe('Flush before importing project media')
+    expect(server.get(id)?.shots[0].ref_images).toBeUndefined()
+    expect(server.get(id)?.reference_sets).toEqual(original.reference_sets)
+    expect(api.saveBoard).toHaveBeenCalledOnce()
+    expect(api.upload).toHaveBeenCalledOnce()
+    expect(api.importReferenceAsset).toHaveBeenCalledOnce()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(api.applyReferenceSet).not.toHaveBeenCalled()
+    expectNoTakeOrGenerationWrites()
+  })
+
+  it('never registers an asset after a failed upload or automatically replays the import on polls', async () => {
+    const original = referenceBoard()
+    server.set('b1', clone(original))
+    fetchMock.mockResolvedValueOnce(jsonResponse({ detail: 'Media upload unavailable' }, 503))
+    await mountWorkspace()
+    fireEvent.click(screen.getByRole('button', { name: t('referenceOpen') }))
+    const dialog = within(screen.getByRole('dialog', { name: t('referenceTitle') }))
+    const file = new File(['audio fixture'], 'new-voice.wav', { type: 'audio/wav' })
+    fireEvent.change(dialog.getByLabelText(t('referenceImportAudio')), { target: { files: [file] } })
+    await settle()
+    expect(dialog.getByRole('alert')).toHaveTextContent('503 Media upload unavailable')
+    await tick(5000)
+    expect(dialog.getByRole('alert')).toHaveTextContent('503 Media upload unavailable')
+    expect(dialog.getByLabelText(t('referenceImportAudio'))).toBeEnabled()
+    expect(api.upload).toHaveBeenCalledExactlyOnceWith(file)
+    expect(api.importReferenceAsset).not.toHaveBeenCalled()
+    expect(api.saveBoard).not.toHaveBeenCalled()
+    expect(api.applyReferenceSet).not.toHaveBeenCalled()
+    expect(fetchMock).toHaveBeenCalledExactlyOnceWith('/api/upload', expect.objectContaining({ method: 'POST' }))
+    expect(server.get('b1')).toEqual(original)
+    expectNoTakeOrGenerationWrites()
+  })
+
+  it('opens the manager from the header and exposes imports and a new editor when the board has no shots', async () => {
+    const original = referenceBoard('b1', { shots: [], reference_sets: [] })
+    server.set('b1', clone(original))
+    await mountWorkspace()
+    expect(screen.queryByRole('combobox', { name: t('referenceChooseSet') })).not.toBeInTheDocument()
+    fireEvent.click(screen.getByRole('button', { name: t('referenceOpen') }))
+    const dialog = within(screen.getByRole('dialog', { name: t('referenceTitle') }))
+    expect(dialog.getByText('Board b1')).toBeInTheDocument()
+    expect(dialog.getByLabelText(t('referenceImportImage'))).toBeEnabled()
+    expect(dialog.getByLabelText(t('referenceImportAudio'))).toBeEnabled()
+    fireEvent.click(dialog.getByRole('button', { name: t('referenceNew') }))
+    expect(dialog.getByRole('form', { name: t('referenceEditor') })).toBeInTheDocument()
+    expect(dialog.getByRole('textbox', { name: t('referenceName') })).toBeEnabled()
+    await tick(5000)
+    expect(dialog.getByRole('textbox', { name: t('referenceName') })).toHaveValue('')
+    fireEvent.click(dialog.getByRole('button', { name: t('referenceClose') }))
+    await settle()
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(server.get('b1')).toEqual(original)
+    expect(api.saveBoard).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expectNoTakeOrGenerationWrites()
   })
 })
