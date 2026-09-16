@@ -2,7 +2,7 @@
 
 2026-09-15 · 用户已确认方向：本机、个人项目、先可靠生成，再复用与轻量剪辑。
 
-**Status:** #7, #8 backend PR A (#13), and #9 backend PR A (#16) are merged. #8 UI PR B (#14) is implemented in this branch, pending review/merge, with #16 integrated from main. #9 UI and #10–#11 are not delivered. GitHub tracks current merge status; no real GPU validation of Song Storyboard is claimed.
+**Status:** #7, #8 backend PR A (#13), #9 backend PR A (#16), and #15 startup recovery protection (#17) are merged. #8 UI PR B (#14) is implemented in this branch, pending review/merge, with #16/#17 integrated from main. #9 UI and #10–#11 are not delivered. GitHub tracks current merge status; no real GPU validation of Song Storyboard is claimed.
 
 ## 路线图与 PR 依赖 / Roadmap & dependencies
 

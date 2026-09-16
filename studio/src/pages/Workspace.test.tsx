@@ -1,5 +1,5 @@
 import { act, cleanup, fireEvent, render, screen, within } from '@testing-library/react'
-import { MemoryRouter, Route, Routes } from 'react-router'
+import { createMemoryRouter, MemoryRouter, Route, RouterProvider, Routes } from 'react-router'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { api, ApiError, type Board, type BoardSummary, type Job, type Shot, type Take, type VideoItem } from '@/lib/api'
 import { translate, type StudioI18nKey } from '@/lib/i18nResources'
@@ -7,6 +7,8 @@ import Workspace from './Workspace'
 
 const t = (key: StudioI18nKey) => translate('zh', key)
 const clone = <T,>(value: T): T => JSON.parse(JSON.stringify(value))
+const readBoard = api.board
+const persistenceDetail = 'Storyboard persistence is unavailable; all writes are blocked. Stop the backend, back up the original file, restore a known-good copy, then restart.'
 
 function shot(id: string, overrides: Partial<Shot> = {}): Shot {
   return {
@@ -109,6 +111,14 @@ function jsonResponse(value: unknown, status = 200) {
 async function settle() { await act(async () => {}) }
 async function tick(ms: number) { await act(async () => { await vi.advanceTimersByTimeAsync(ms) }) }
 
+function renderRoute(path = '/') {
+  const router = createMemoryRouter([
+    { path: '/', element: <Workspace /> },
+    { path: '/b/:boardId', element: <Workspace /> },
+  ], { initialEntries: [path] })
+  return { ...render(<RouterProvider router={router} />), router }
+}
+
 async function mountWorkspace(id = 'b1') {
   const view = render(<MemoryRouter initialEntries={[`/b/${encodeURIComponent(id)}`]}>
     <Routes><Route path="/b/:boardId" element={<Workspace />} /></Routes>
@@ -173,6 +183,182 @@ afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
   vi.unstubAllGlobals()
+})
+
+describe('Workspace load failure recovery', () => {
+  it('shows a root list failure without creating a board, keeps Settings accessible, and retries successfully', async () => {
+    vi.mocked(api.boards).mockRejectedValueOnce(new ApiError(503, persistenceDetail))
+    const { router } = renderRoute()
+    await settle()
+    expect(screen.getByRole('alert')).toHaveTextContent(persistenceDetail)
+    expect(screen.getByRole('alert')).toHaveTextContent(t('boardLoadHint'))
+    expect(api.boards).toHaveBeenCalledOnce()
+    expect(api.saveBoard).not.toHaveBeenCalled()
+    expect(api.board).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: t('settingsTitle') }))
+    expect(screen.getByRole('dialog')).toBeInTheDocument()
+    expect(screen.getByPlaceholderText(t('settingsAuthPlaceholder'))).toHaveAttribute('type', 'password')
+    fireEvent.keyDown(screen.getByRole('dialog'), { key: 'Escape' })
+    await settle()
+    fireEvent.click(screen.getByRole('button', { name: t('retryLoad') }))
+    await settle()
+    expect(router.state.location.pathname).toBe('/b/b1')
+    expect(screen.getByDisplayValue('Board b1')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(api.saveBoard).not.toHaveBeenCalled()
+  })
+
+  it('shows the sanitized API detail on a failed deep link and recovers on retry without a save', async () => {
+    vi.mocked(api.board).mockImplementationOnce(readBoard)
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
+      detail: persistenceDetail, code: 'board_persistence_unavailable', reason: 'invalid_json',
+    }), { status: 503 }))
+    const { router } = renderRoute('/b/b1')
+    await settle()
+    expect(screen.getByRole('alert')).toHaveTextContent(`503 ${persistenceDetail}`)
+    expect(screen.getByRole('alert')).not.toHaveTextContent('invalid_json')
+    expect(screen.queryByDisplayValue('Board b1')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: t('settingsTitle') })).toBeEnabled()
+    expect(api.saveBoard).not.toHaveBeenCalled()
+    fireEvent.click(screen.getByRole('button', { name: t('retryLoad') }))
+    await settle()
+    expect(router.state.location.pathname).toBe('/b/b1')
+    expect(screen.getByDisplayValue('Board b1')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(api.saveBoard).not.toHaveBeenCalled()
+  })
+
+  it('creates exactly once when the initial list genuinely succeeds with no boards', async () => {
+    server.clear()
+    vi.mocked(api.saveBoard).mockImplementationOnce(async (value) => {
+      const created = { ...value, id: 'created', createdAt: 1, modifiedAt: 1 }
+      server.set(created.id, created)
+      return clone(created)
+    })
+    const { router } = renderRoute()
+    await settle()
+    expect(api.saveBoard).toHaveBeenCalledExactlyOnceWith(expect.objectContaining({ id: '', shots: [] }))
+    expect(router.state.location.pathname).toBe('/b/created')
+    expect(screen.getByDisplayValue('未命名分镜')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('catches rejected initial creation and does not retry writes automatically', async () => {
+    vi.mocked(api.boards).mockResolvedValue([])
+    vi.mocked(api.saveBoard).mockRejectedValueOnce(new ApiError(401, 'Authentication required'))
+    const { router } = renderRoute()
+    await settle()
+    expect(screen.getByRole('alert')).toHaveTextContent('401 Authentication required')
+    expect(screen.getByRole('button', { name: t('settingsTitle') })).toBeEnabled()
+    expect(screen.getByRole('button', { name: t('retryLoad') })).toBeEnabled()
+    await tick(5000)
+    expect(api.saveBoard).toHaveBeenCalledOnce()
+    expect(router.state.location.pathname).toBe('/')
+  })
+
+  it('does not hide a list failure when the deep-linked board loads successfully', async () => {
+    vi.mocked(api.boards).mockRejectedValueOnce(new ApiError(503, 'List unavailable'))
+    await mountWorkspace()
+    expect(screen.getByRole('alert')).toHaveTextContent('503 List unavailable')
+    await tick(2500)
+    expect(screen.getByRole('alert')).toHaveTextContent('503 List unavailable')
+    expect(api.saveBoard).not.toHaveBeenCalled()
+  })
+
+  it('ignores an older empty list when overlapping retries resolve out of order', async () => {
+    vi.mocked(api.boards).mockRejectedValueOnce(new ApiError(503, 'List unavailable'))
+    const { router } = renderRoute()
+    await settle()
+    const pending = deferred<BoardSummary[]>()
+    vi.mocked(api.boards).mockReturnValueOnce(pending.promise)
+    fireEvent.click(screen.getByRole('button', { name: t('retryLoad') }))
+    await settle()
+    fireEvent.click(screen.getByRole('button', { name: t('retryLoad') }))
+    await settle()
+    await act(async () => { pending.resolve([]) })
+    expect(router.state.location.pathname).toBe('/b/b1')
+    expect(screen.getByDisplayValue('Board b1')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(api.saveBoard).not.toHaveBeenCalled()
+  })
+
+  it.each(['empty', 'existing', 'failure'] as const)('ignores a cancelled root list response: %s', async (result) => {
+    const pending = deferred<BoardSummary[]>()
+    vi.mocked(api.boards).mockReturnValueOnce(pending.promise)
+    const { router } = renderRoute()
+    await settle()
+    await act(async () => { await router.navigate('/b/b2') })
+    await act(async () => {
+      if (result === 'failure') pending.reject(new ApiError(503, 'Stale root failure'))
+      else pending.resolve(result === 'empty' ? [] : [summary(server.get('b1')!)])
+    })
+    expect(router.state.location.pathname).toBe('/b/b2')
+    expect(screen.getByDisplayValue('Board b2')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(api.saveBoard).not.toHaveBeenCalled()
+  })
+
+  it.each(['success', 'failure'] as const)('ignores a cancelled auto-create response: %s', async (result) => {
+    const pending = deferred<Board>()
+    vi.mocked(api.boards).mockResolvedValueOnce([])
+    vi.mocked(api.saveBoard).mockReturnValueOnce(pending.promise)
+    const { router } = renderRoute()
+    await settle()
+    expect(api.saveBoard).toHaveBeenCalledOnce()
+    await act(async () => { await router.navigate('/b/b2') })
+    await act(async () => {
+      if (result === 'failure') pending.reject(new ApiError(503, 'Stale creation failure'))
+      else pending.resolve(board('created'))
+    })
+    expect(router.state.location.pathname).toBe('/b/b2')
+    expect(screen.getByDisplayValue('Board b2')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+
+  it('ignores a late board failure after navigating away and returning to a successful newer read', async () => {
+    const pending = deferred<Board>()
+    vi.mocked(api.board).mockReturnValueOnce(pending.promise)
+    const { router } = renderRoute('/b/b1')
+    await settle()
+    await act(async () => { await router.navigate('/b/b2') })
+    await act(async () => { await router.navigate('/b/b1') })
+    await act(async () => { pending.reject(new ApiError(503, 'Stale board failure')) })
+    expect(screen.getByDisplayValue('Board b1')).toBeInTheDocument()
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(api.saveBoard).not.toHaveBeenCalled()
+  })
+
+  it('ignores an old poll failure after retry succeeds and preserves unsaved local edits', async () => {
+    await mountWorkspace()
+    vi.mocked(api.board).mockRejectedValueOnce(new ApiError(503, persistenceDetail))
+    await tick(2500)
+    expect(screen.getByRole('alert')).toHaveTextContent(persistenceDetail)
+    const pending = deferred<Board>()
+    vi.mocked(api.board).mockReturnValueOnce(pending.promise)
+    await tick(2500)
+    editPrompt('Keep this local edit across retry')
+    fireEvent.click(screen.getByRole('button', { name: t('retryLoad') }))
+    await settle()
+    await act(async () => { pending.reject(new ApiError(503, 'Stale poll failure')) })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: t('prompt') })).toHaveValue('Keep this local edit across retry')
+    expect(api.saveBoard).not.toHaveBeenCalled()
+  })
+
+  it('does not create a replacement after deletion if the remaining-board list fails', async () => {
+    await mountWorkspace()
+    vi.spyOn(api, 'deleteBoard').mockResolvedValue({})
+    vi.mocked(api.boards).mockRejectedValue(new ApiError(503, 'List unavailable after deletion'))
+    fireEvent.click(screen.getByRole('button', { name: 'Board b1 ▾' }))
+    const row = screen.getByText('Board b1', { selector: 'span' }).closest('.group') as HTMLElement
+    fireEvent.click(within(row).getByTitle(t('delete')))
+    await settle()
+    fireEvent.click(within(row).getByRole('button', { name: t('confirmDelete') }))
+    await settle()
+    expect(api.deleteBoard).toHaveBeenCalledExactlyOnceWith('b1')
+    expect(screen.getAllByRole('alert').some((alert) => alert.textContent?.includes('List unavailable after deletion'))).toBe(true)
+    expect(api.saveBoard).not.toHaveBeenCalled()
+  })
 })
 
 describe('Workspace draft and generation regressions through the real route', () => {
@@ -498,6 +684,78 @@ describe('Workspace draft and generation regressions through the real route', ()
 })
 
 describe('Workspace take integration through the real route', () => {
+  it.each(['preview old', 'follow adopted'] as const)('preserves %s and dirty inputs across recovery retry and a stale poll failure', async (mode) => {
+    const s = takenShot('b1-s1'), [old, adopted] = s.takes!
+    const original = board('b1', { shots: [s], result: 'assembled.mp4' })
+    server.set('b1', clone(original))
+    const { container } = await mountWorkspace()
+    const preview = mode === 'preview old' ? old : adopted
+    fireEvent.click(takeControl(preview.id, 'play', mode === 'preview old' ? 1 : 2))
+    vi.mocked(api.board).mockRejectedValueOnce(new ApiError(503, persistenceDetail))
+    await tick(2500)
+    expect(screen.getByRole('alert')).toHaveTextContent(persistenceDetail)
+    const pending = deferred<Board>()
+    vi.mocked(api.board).mockReturnValueOnce(pending.promise)
+    await tick(2500)
+    editPrompt('Unsaved input must survive take preview recovery')
+    fireEvent.click(screen.getByRole('button', { name: t('retryLoad') }))
+    await settle()
+    await act(async () => { pending.reject(new ApiError(503, 'Stale recovery poll')) })
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: t('prompt') })).toHaveValue('Unsaved input must survive take preview recovery')
+    expect(container.querySelector('video[controls]')).toHaveAttribute('src', `/outputs/${encodeURIComponent(preview.output)}`)
+    expect(within(screen.getByTestId(`take-${adopted.id}`)).getByText(t('takeSelected'))).toBeInTheDocument()
+    expect(server.get('b1')).toEqual(original)
+    expect(api.saveBoard).not.toHaveBeenCalled()
+    expect(api.selectTake).not.toHaveBeenCalled()
+    expect(api.deleteTake).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expectNoQueue()
+  })
+
+  it.each(['takeSelect', 'takeDelete'] as const)('blocks %s after a recovery save failure and never replays it on read retry', async (action) => {
+    const s = takenShot('b1-s1'), [old, adopted] = s.takes!
+    const original = board('b1', { shots: [s] })
+    server.set('b1', clone(original))
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    const { container } = await mountWorkspace()
+    fireEvent.click(takeControl(old.id, 'play', 1))
+    vi.mocked(api.saveBoard).mockRejectedValueOnce(new ApiError(503, persistenceDetail))
+    vi.mocked(api.board).mockRejectedValue(new ApiError(503, persistenceDetail))
+    vi.mocked(api.boards).mockRejectedValue(new ApiError(503, persistenceDetail))
+    editPrompt('Keep the draft while writes are blocked')
+    fireEvent.click(takeControl(old.id, action, 1))
+    await settle()
+    expect(screen.getAllByRole('alert').some((alert) => alert.textContent?.includes(persistenceDetail))).toBe(true)
+    await tick(5000)
+    expect(api.saveBoard).toHaveBeenCalledOnce()
+    expect(api.selectTake).not.toHaveBeenCalled()
+    expect(api.deleteTake).not.toHaveBeenCalled()
+    expect(server.get('b1')).toEqual(original)
+    expect(container.querySelector('video[controls]')).toHaveAttribute('src', `/outputs/${encodeURIComponent(old.output)}`)
+
+    vi.mocked(api.board).mockImplementation(async (id) => clone(server.get(id)!))
+    vi.mocked(api.boards).mockImplementation(async () => [...server.values()].map(summary))
+    fireEvent.click(screen.getByRole('button', { name: t('retryLoad') }))
+    await settle()
+    expect(screen.queryByRole('button', { name: t('retryLoad') })).not.toBeInTheDocument()
+    expect(screen.getByRole('textbox', { name: t('prompt') })).toHaveValue('Keep the draft while writes are blocked')
+    expect(api.saveBoard).toHaveBeenCalledOnce()
+    fireEvent.click(screen.getByRole('button', { name: t('retrySave') }))
+    await settle()
+    expect(api.saveBoard).toHaveBeenCalledTimes(2)
+    expect(server.get('b1')?.shots[0]).toEqual({
+      ...s, prompt: 'Keep the draft while writes are blocked', prompt_mode: 'simple', prompt_fields: null,
+    })
+    expect(within(screen.getByTestId(`take-${adopted.id}`)).getByText(t('takeSelected'))).toBeInTheDocument()
+    expect(container.querySelector('video[controls]')).toHaveAttribute('src', `/outputs/${encodeURIComponent(old.output)}`)
+    expect(api.selectTake).not.toHaveBeenCalled()
+    expect(api.deleteTake).not.toHaveBeenCalled()
+    expect(api.generateShot).not.toHaveBeenCalled()
+    expect(fetchMock).not.toHaveBeenCalled()
+    expectNoQueue()
+  })
+
   it.each(['play selected', 'return selected', 'adopt'] as const)('follows a newer canonical selection after %s and reload, without pinning an old take', async (action) => {
     const s = takenShot('b1-s1'), [old, adopted] = s.takes!
     server.set('b1', board('b1', { shots: [s], result: 'assembled.mp4' }))
