@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { api, type Job } from '@/lib/api'
 import { useI18n } from '@/lib/useI18n'
 import { Progress } from '@/components/ui/progress'
@@ -14,10 +14,14 @@ interface Props {
   onAddShot: () => void
   sequencing: boolean
   onSequenceEnded: () => void
+  contextLabel?: string
+  onReturnToSelected?: () => void
+  missing?: boolean
 }
 
 export default function PreviewPane({
   video, runningJob, watchJob, onWatchJob, draftJob, onResume, hasShots, onAddShot, sequencing, onSequenceEnded,
+  contextLabel, onReturnToSelected, missing = false,
 }: Props) {
   const { t } = useI18n()
   const logRef = useRef<HTMLDivElement>(null)
@@ -32,6 +36,12 @@ export default function PreviewPane({
     <div className="flex-1 min-w-0 flex flex-col">
       <div className="flex items-stretch shrink-0">
         <div className="bar-invert">{t('preview')}</div>
+        {contextLabel && <div className="bar min-w-0 truncate" title={contextLabel}>{contextLabel}</div>}
+        {onReturnToSelected && (
+          <button onClick={onReturnToSelected} className="bar linkfade !text-white border-l border-border">
+            {t('takeReturnSelected')}
+          </button>
+        )}
         {runningJob && !showJob && (
           <button onClick={() => onWatchJob(true)} className="bar linkfade !text-white border-l border-border">
             ● {runningJob.phase ?? t('starting')} {runningJob.done}/{runningJob.total || '…'} · {pct}%
@@ -64,9 +74,13 @@ export default function PreviewPane({
               {(runningJob.log ?? []).slice(-40).join('\n')}
             </div>
           </div>
+        ) : missing ? (
+          <div role="status" className="max-w-md text-center text-[12px] text-amber-400">
+            <p>{t('takeMissing')}</p>
+            <p className="mt-2 text-muted-foreground">{t('takeMissingHint')}</p>
+          </div>
         ) : video ? (
-          <video key={video} src={`/outputs/${video}`} controls autoPlay loop={!sequencing}
-            onEnded={sequencing ? onSequenceEnded : undefined} className="max-w-full max-h-full" />
+          <TakeVideo key={video} video={video} sequencing={sequencing} onSequenceEnded={onSequenceEnded} />
         ) : !hasShots ? (
           <div className="flex flex-col items-center gap-3">
             <div className="text-muted-foreground text-[12px] uppercase tracking-[0.2em]">{t('selectShotHint')}</div>
@@ -82,5 +96,17 @@ export default function PreviewPane({
         )}
       </div>
     </div>
+  )
+}
+
+function TakeVideo({ video, sequencing, onSequenceEnded }: Pick<Props, 'sequencing' | 'onSequenceEnded'> & { video: string }) {
+  const { t } = useI18n()
+  const [failed, setFailed] = useState(false)
+
+  return failed ? (
+    <div role="alert" className="max-w-md text-center text-[12px] text-amber-400">{t('takeMediaError')}</div>
+  ) : (
+    <video src={`/outputs/${encodeURIComponent(video)}`} controls autoPlay loop={!sequencing}
+      onError={() => setFailed(true)} onEnded={sequencing ? onSequenceEnded : undefined} className="max-w-full max-h-full" />
   )
 }

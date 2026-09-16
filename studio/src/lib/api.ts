@@ -143,6 +143,27 @@ export interface Shot {
   status: string
   output: string | null
   job_id: string | null
+  takes?: Take[]
+  selected_take_id?: string | null
+  continuity_state?: 'none' | 'current' | 'unknown' | 'stale'
+  stale?: boolean
+  output_missing?: boolean
+}
+
+/** Historical snapshots may contain unknown/older fields; never fill with live shot inputs. */
+export interface Take {
+  id: string
+  shot_id: string
+  job_id: string | null
+  output: string
+  created_at: number | null
+  request: Record<string, unknown> | null
+  request_unknown: boolean
+  source_take_id: string | null
+  source_unknown: boolean
+  legacy: boolean
+  model_name: string | null
+  missing: boolean
 }
 
 export interface Board {
@@ -181,6 +202,13 @@ export const api = {
     }),
   generateShot: (boardId: string, shotId: string) =>
     req<GenerateResult>(`/api/boards/${encodeURIComponent(boardId)}/shots/${encodeURIComponent(shotId)}/generate`, { method: 'POST' }),
+  takes: (boardId: string, shotId: string) =>
+    req<Take[]>(`/api/boards/${encodeURIComponent(boardId)}/shots/${encodeURIComponent(shotId)}/takes`),
+  selectTake: (boardId: string, shotId: string, takeId: string) =>
+    req<Board>(`/api/boards/${encodeURIComponent(boardId)}/shots/${encodeURIComponent(shotId)}/takes/${encodeURIComponent(takeId)}/select`, { method: 'POST' }),
+  deleteTake: (boardId: string, shotId: string, takeId: string) =>
+    req<Board>(`/api/boards/${encodeURIComponent(boardId)}/shots/${encodeURIComponent(shotId)}/takes/${encodeURIComponent(takeId)}`, { method: 'DELETE' }),
+  deleteVideo: (name: string) => req<{ ok: boolean }>(`/api/videos/${encodeURIComponent(name)}`, { method: 'DELETE' }),
   resumeJob: (jobId: string) =>
     req<GenerateResult>(`/api/jobs/${encodeURIComponent(jobId)}/resume`, { method: 'POST' }),
   cancel: (id: string) => req(`/api/jobs/${encodeURIComponent(id)}`, { method: 'DELETE' }),

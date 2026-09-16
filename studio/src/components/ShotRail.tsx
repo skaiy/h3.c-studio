@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { type Board, type Shot } from '@/lib/api'
+import { selectedOutput, selectedOutputMissing } from '@/lib/takes'
 import { useI18n } from '@/lib/useI18n'
 
 const STATUS_DOT: Record<string, string> = {
@@ -32,7 +33,8 @@ export default function ShotRail({ board, disabled = false, selected, onSelect, 
   const { t } = useI18n()
   const [dragIdx, setDragIdx] = useState<number | null>(null)
   const [dropAt, setDropAt] = useState<number | null>(null)
-  const doneCount = board.shots.filter((s) => s.status === 'done').length
+  const doneCount = board.shots.filter((s) => selectedOutput(s) && !selectedOutputMissing(s)).length
+  const hasMissingOutput = board.shots.some(selectedOutputMissing)
 
   return (
     <div className="w-[104px] shrink-0 border-r border-border flex flex-col min-h-0">
@@ -79,11 +81,13 @@ export default function ShotRail({ board, disabled = false, selected, onSelect, 
           className="h-8 text-[11px] uppercase tracking-[0.12em] hover:bg-white hover:text-black transition-colors disabled:opacity-40">
           ▶ {t('runAll')}
         </button>
-        <button onClick={onToggleSequence} disabled={!sequencing && doneCount < 1}
+        <button onClick={onToggleSequence} disabled={!sequencing && (doneCount < 1 || hasMissingOutput)}
+          title={sequencing ? t('stopSequence') : hasMissingOutput ? t('takeSequenceMissing') : t('sequencePreview')}
           className="h-8 text-[11px] uppercase tracking-[0.12em] border-t border-border hover:bg-white hover:text-black transition-colors disabled:opacity-40">
           {sequencing ? `■ ${t('stopSequence')}` : `▶ ${t('sequencePreview')}`}
         </button>
-        <button onClick={onConcat} disabled={disabled || doneCount < 2 || board.status === 'running'}
+        <button onClick={onConcat} disabled={disabled || doneCount < 2 || hasMissingOutput || board.status === 'running'}
+          title={hasMissingOutput ? t('takeSequenceMissing') : t('concat')}
           className="h-8 text-[11px] uppercase tracking-[0.12em] border-t border-border hover:bg-white hover:text-black transition-colors disabled:opacity-40">
           ⇢ {t('concat')} {doneCount}/{board.shots.length}
         </button>
@@ -120,7 +124,12 @@ interface CardProps {
 }
 
 function ShotCard({ shot, disabled, index, active, dragging, onClick, onDragStart, onDragEnd, onDragOverCard, onDrop, onDuplicate, onDelete, deleteLabel, confirmLabel, duplicateTitle }: CardProps) {
+  const { t } = useI18n()
   const [confirming, setConfirming] = useState(false)
+  const output = selectedOutput(shot)
+  const missing = selectedOutputMissing(shot)
+  const takeCount = shot.takes?.length ?? (output ? 1 : 0)
+  const stale = shot.continuity_state === 'stale' || shot.stale
   return (
     <div
       data-testid={`shot-card-${index}`}
@@ -132,8 +141,8 @@ function ShotCard({ shot, disabled, index, active, dragging, onClick, onDragStar
       className={`group relative w-full text-left border transition-colors cursor-pointer ${active ? 'border-white' : 'border-border hover:border-muted-foreground'} ${dragging ? 'opacity-40' : ''}`}
       onClick={onClick}
     >
-      {shot.output ? (
-        <video src={`/outputs/${shot.output}`} preload="metadata" muted className="w-full h-14 object-cover pointer-events-none" />
+      {output && !missing ? (
+        <video src={`/outputs/${encodeURIComponent(output)}`} preload="metadata" muted className="w-full h-14 object-cover pointer-events-none" />
       ) : (
         <div className="w-full h-14 flex items-center justify-center text-muted-foreground/40 mono text-lg">
           {index + 1}
@@ -162,6 +171,19 @@ function ShotCard({ shot, disabled, index, active, dragging, onClick, onDragStar
           className={`h-5 text-[9px] ${confirming ? 'bg-black text-white border border-white px-0.5' : 'w-5 bg-black/70 text-white border border-border hover:border-white'}`}>
           {confirming ? confirmLabel : '✕'}
         </button>
+      </div>
+      <div className="px-1 py-0.5 flex flex-col gap-0.5 text-[9px] leading-tight">
+        <span className="text-muted-foreground" title={`${t('takeHistory')}: ${takeCount}`}>
+          {t('takeLabel')} · {takeCount}
+        </span>
+        {stale ? (
+          <span className="text-amber-400" title={t('takeStaleHint')}>{t('takeStale')}</span>
+        ) : shot.continuity_state === 'unknown' ? (
+          <span className="text-amber-400" title={t('takeUnknownSource')}>{t('takeUnknownSource')}</span>
+        ) : null}
+        {missing && (
+          <span className="text-amber-400" title={t('takeMissingHint')}>{t('takeMissing')}</span>
+        )}
       </div>
     </div>
   )

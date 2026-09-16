@@ -1,4 +1,4 @@
-import { useRef, useState } from 'react'
+import { useRef, useState, type ReactNode } from 'react'
 import { api, type Shot } from '@/lib/api'
 import { type I18nKey } from '@/lib/i18n'
 import { useI18n } from '@/lib/useI18n'
@@ -125,9 +125,10 @@ interface Props {
   onChange: (patch: Partial<Shot>) => void
   onGenerate: () => void
   generating: boolean
+  takePanel?: ReactNode
 }
 
-export default function ShotInspector({ shot, chain, isFirst, onChange, onGenerate, generating }: Props) {
+export default function ShotInspector({ shot, chain, isFirst, onChange, onGenerate, generating, takePanel }: Props) {
   const { lang } = useI18n()
   const t = (key: StudioI18nKey) => translate(lang, key)
   const promptMode = shot.prompt_mode ?? 'simple'
@@ -168,6 +169,7 @@ export default function ShotInspector({ shot, chain, isFirst, onChange, onGenera
 
   return (
     <div className="w-[340px] shrink-0 border-l border-border overflow-y-auto flex flex-col">
+      {takePanel}
       <div className="bar-invert justify-between">
         <span>{t('prompt')}</span>
         <div className="flex gap-1">
