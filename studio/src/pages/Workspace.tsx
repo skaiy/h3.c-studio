@@ -3,6 +3,7 @@ import { useNavigate, useParams } from 'react-router'
 import { Settings } from 'lucide-react'
 import { api, type Board, type BoardSummary, type Job, type Shot, type VideoItem } from '@/lib/api'
 import { BoardDrafts } from '@/lib/boardDrafts'
+import { selectedOutput, selectedOutputMissing, selectedTake } from '@/lib/takes'
 import { useI18n } from '@/lib/useI18n'
 import { insertShotAt, duplicateShotAt, removeShotAt, moveShot, nextSelectedAfterDelete } from '@/lib/shotOps'
 import BoardSwitcher from '@/components/BoardSwitcher'
@@ -11,6 +12,7 @@ import ShotInspector from '@/components/ShotInspector'
 import PreviewPane from '@/components/PreviewPane'
 import LibraryStrip from '@/components/LibraryStrip'
 import SettingsSheet from '@/components/SettingsSheet'
+import TakePanel from '@/components/TakePanel'
 
 function newShot(): Shot {
   return {
@@ -41,6 +43,10 @@ export default function Workspace() {
   const [operationErrors, setOperationErrors] = useState<Record<string, string>>({})
   const operationError = boardId ? operationErrors[boardId] : ''
   const [libraryVideo, setLibraryVideo] = useState<string | null>(null)
+  // A null takeId follows the canonical selection, overriding an assembled board result.
+  const [takePreview, setTakePreview] = useState<{ boardId: string; shotId: string; takeId: string | null } | null>(null)
+  const previewRevision = useRef(0)
+  const currentView = useRef('')
   const operationLock = useRef(new Set<string>())
   const jobsRequest = useRef(0)
   const boardsRequest = useRef(0)
@@ -125,6 +131,7 @@ export default function Workspace() {
     setSequenceIdx(null)
     setSelected(0)
     setLibraryVideo(null)
+    setTakePreview(null)
   }
 
   const refreshJobs = useCallback(async () => {
@@ -172,6 +179,8 @@ export default function Workspace() {
 
   const shot = board?.shots[selected] ?? null
   const selectedShotId = shot?.id
+  const viewKey = JSON.stringify([boardId, selectedShotId])
+  useEffect(() => { currentView.current = viewKey }, [viewKey])
   const patchShot = useCallback((patch: Partial<Shot>) => {
     patchBoard((b) => ({
       ...b,
@@ -203,6 +212,37 @@ export default function Workspace() {
     })
   }
 
+  const previewTake = (takeId: string) => {
+    if (!board || !shot) return
+    previewRevision.current++
+    setTakePreview({ boardId: board.id, shotId: shot.id, takeId: takeId === shot.selected_take_id ? null : takeId })
+    setSequenceIdx(null)
+    setLibraryVideo(null)
+    setWatchJob(false)
+  }
+
+  const mutateTake = async (takeId: string, remove: boolean) => {
+    if (!board || !shot || boardBusy) return
+    if (remove && !window.confirm(t('takeDeleteConfirm'))) return
+    const id = board.id, shotId = shot.id, origin = viewKey
+    const revision = ++previewRevision.current
+    await operate(id, async () => {
+      await drafts.flush(id)
+      try {
+        const updated = await (remove ? api.deleteTake(id, shotId, takeId) : api.selectTake(id, shotId, takeId))
+        drafts.receive(updated)
+        if (currentView.current === origin && previewRevision.current === revision) {
+          setTakePreview(remove ? null : { boardId: id, shotId, takeId: null })
+          setSequenceIdx(null)
+          setLibraryVideo(null)
+          setWatchJob(false)
+        }
+      } catch (error) {
+        throw new Error(`${t(remove ? 'takeDeleteFailed' : 'takeSelectFailed')}: ${error instanceof Error ? error.message : t('operationFailed')}`)
+      }
+    })
+  }
+
   const insertShot = (at: number) => {
     patchBoard((b) => ({ ...b, shots: insertShotAt(b.shots, at, newShot()) }))
     setSelected(at)
@@ -213,6 +253,7 @@ export default function Workspace() {
       ...b,
       shots: duplicateShotAt(b.shots, i, (src) => ({
         ...src, id: `s${crypto.randomUUID()}`, status: 'idle', output: null, job_id: null,
+        takes: [], selected_take_id: null, continuity_state: 'none', stale: false, output_missing: false,
       })),
     }))
     setSelected(i + 1)
@@ -242,11 +283,14 @@ export default function Workspace() {
 
   const concat = async () => {
     if (!board) return
-    const id = board.id
+    const id = board.id, origin = viewKey, revision = previewRevision.current
     await operate(id, async () => {
       await drafts.flush(id)
       await api.concatBoard(id)
-      setLibraryVideo(null)
+      if (currentView.current === origin && previewRevision.current === revision) {
+        setLibraryVideo(null)
+        setTakePreview(null)
+      }
     })
   }
 
@@ -271,10 +315,18 @@ export default function Workspace() {
 
   const draftJob = jobs.find((j) => j.status === 'done' && j.checkpoint && j.checkpoint !== resumedFrom
     && j.params.board_id === board?.id && j.params.shot_id === shot?.id) ?? null
-  const doneOutputs = board?.shots.filter((s) => s.output).map((s) => s.output!) ?? []
+  const boardMissing = board?.shots.some(selectedOutputMissing) ?? false
+  const doneOutputs = board?.shots.map(selectedOutput).filter((output): output is string => !!output) ?? []
   const sequencing = sequenceIdx !== null
-  const currentVideo = sequencing ? (doneOutputs[sequenceIdx!] ?? null) : (libraryVideo ?? board?.result ?? shot?.output ?? null)
-  const boardBusy = board?.status === 'running' || operationBoards.includes(boardId ?? '')
+  const browsedTake = takePreview && takePreview.boardId === boardId && takePreview.shotId === shot?.id
+    ? (takePreview.takeId === null ? selectedTake(shot) : shot?.takes?.find((take) => take.id === takePreview.takeId) ?? null) : null
+  const currentVideo = sequencing ? (doneOutputs[sequenceIdx!] ?? null)
+    : (libraryVideo ?? browsedTake?.output ?? board?.result ?? selectedOutput(shot))
+  const previewMissing = sequencing ? boardMissing : !libraryVideo && (browsedTake
+    ? browsedTake.missing : !board?.result && !!shot && selectedOutputMissing(shot))
+  const shownTake = sequencing || libraryVideo || (!browsedTake && board?.result) ? null : browsedTake ?? selectedTake(shot)
+  const previewContext = shownTake ? `${t('takeLabel')} ${(shot?.takes?.findIndex((take) => take.id === shownTake.id) ?? -1) + 1} · ${t(shownTake.id === shot?.selected_take_id ? 'takeSelected' : 'takePreviewOnly')}` : undefined
+  const boardBusy = board?.status === 'running' || board?.shots.some((s) => s.status === 'queued' || s.status === 'running') || operationBoards.includes(boardId ?? '')
 
   const reloadDiscardingDraft = async () => {
     if (!board || !window.confirm(t('discardDraftConfirm'))) return
@@ -283,8 +335,12 @@ export default function Workspace() {
   }
 
   const toggleSequence = () => {
+    previewRevision.current++
     if (sequencing) { setSequenceIdx(null); return }
-    if (doneOutputs.length === 0) return
+    if (doneOutputs.length === 0 || boardMissing) return
+    setTakePreview(null)
+    setLibraryVideo(null)
+    setWatchJob(false)
     setSequenceIdx(0)
   }
   const advanceSequence = () => {
@@ -354,13 +410,14 @@ export default function Workspace() {
           </>}
         </div>
       )}
+      {boardMissing && <div role="status" className="px-3 py-2 text-xs text-amber-300 border-b border-border">{t('takeSequenceMissing')}</div>}
 
       <div className="flex flex-1 min-h-0">
         <ShotRail
           board={board}
           disabled={boardBusy}
           selected={selected}
-          onSelect={(i) => { setSequenceIdx(null); setLibraryVideo(null); setSelected(i) }}
+          onSelect={(i) => { previewRevision.current++; setSequenceIdx(null); setLibraryVideo(null); setTakePreview(null); setSelected(i) }}
           onAddShot={addShot}
           onInsertShot={insertShot}
           onDuplicateShot={duplicateShot}
@@ -373,6 +430,13 @@ export default function Workspace() {
         />
         <PreviewPane
           video={currentVideo}
+          contextLabel={previewContext}
+          missing={previewMissing}
+          onReturnToSelected={browsedTake && browsedTake.id !== shot?.selected_take_id ? () => {
+            const adopted = selectedTake(shot)
+            if (adopted) previewTake(adopted.id)
+            else { previewRevision.current++; setTakePreview(null) }
+          } : undefined}
           runningJob={runningJob}
           watchJob={watchJob}
           onWatchJob={setWatchJob}
@@ -393,6 +457,10 @@ export default function Workspace() {
             onChange={patchShot}
             onGenerate={generateShot}
             generating={boardBusy}
+            takePanel={<TakePanel key={`${board.id}/${shot.id}`} shot={shot}
+              previewingTakeId={browsedTake?.id ?? null} disabled={boardBusy}
+              onPreview={previewTake} onSelect={(id) => { void mutateTake(id, false) }}
+              onDelete={(id) => { void mutateTake(id, true) }} />}
           />
           </fieldset>
         )}
@@ -402,6 +470,9 @@ export default function Workspace() {
         videos={videos}
         current={currentVideo}
         onPlay={(name) => {
+          previewRevision.current++
+          setSequenceIdx(null)
+          setTakePreview(null)
           setLibraryVideo(name)
           setWatchJob(false)
         }}

@@ -63,7 +63,8 @@ edits, rollback for ordinary disk-full save failures, or recovery of data alread
 No GPU execution, personal-media manipulation or destructive recovery is required.
 Tests use isolated synthetic files and assert original bytes survive rejected writes.
 
-#16 is now on main and integrated here, including its reference schemas and frozen
-shot/take snapshots. Combined reference-set/recovery tests validate normal restart,
-malformed nested metadata and blocked reference mutations. #14's take UI remains
-separate; retain the fail-closed loader and rerun combined tests on future updates.
+#16 and #17 are now on main and integrated with #14's take UI in this branch.
+Combined tests cover reference metadata restart/rejection, preview and dirty-draft
+retention across loading retries, and failed saves blocking take mutations without
+replaying them on recovery. Retain the fail-closed loader and rerun these tests on
+future updates; #14 remains pending human review/merge.
