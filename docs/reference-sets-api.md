@@ -88,8 +88,9 @@ missing files and deletion guards. Real tiny PNG/WAV ffprobe cases run when avai
 UI interaction and true GPU generation quality are not validated by these tests.
 See [the roadmap](local-personal-workflow.md) and issues #9/#11 for later work.
 
-Known inherited recovery limitation: malformed persisted take metadata (including a
-structurally invalid reference snapshot) makes the existing board loader return an
-empty collection. A subsequent save may overwrite that file. Do not hand-edit the
-JSON; keep backups. Per-record quarantine and fail-closed recovery are tracked in
-[#15](https://github.com/skaiy/h3.c-studio/issues/15), not delivered by this API.
+Startup recovery protection (#15/#17) is integrated in this branch: malformed
+persisted reference metadata blocks board reads and all API writes with a safe
+503 instead of masquerading as an empty project. Valid frozen snapshots still
+load unchanged; missing media alone does not block loading. The original file is
+not repaired or overwritten. See [manual recovery](persistence-recovery.md);
+per-record salvage and jobs.json recovery remain out of scope.

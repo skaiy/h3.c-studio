@@ -2,7 +2,7 @@
 
 2026-09-15 · 用户已确认方向：本机、个人项目、先可靠生成，再复用与轻量剪辑。
 
-**Status:** #7 and #8 backend PR A (#13) are merged; #8 UI PR B (#14) is pending review/merge. #9 backend PR A is implemented independently from main in this branch, pending review/merge. #9 UI and #10–#11 are not delivered. GitHub tracks current merge status; no real GPU validation of Song Storyboard is claimed.
+**Status:** #7, #8 backend PR A (#13), and #9 backend PR A (#16) are merged; #8 UI PR B (#14) is pending review/merge. This branch integrates the #16 reference schemas with #15 startup recovery protection (PR #17, pending review/merge). #9 UI and #10–#11 are not delivered. GitHub tracks current merge status; no real GPU validation of Song Storyboard is claimed.
 
 ## 路线图与 PR 依赖 / Roadmap & dependencies
 
@@ -10,7 +10,7 @@
 |---|---|---|---|
 | [#7 · P0](https://github.com/skaiy/h3.c-studio/issues/7) | 已合并 | 输入/结构化提示词持久化、单条/批量共用请求构建与预检、按原任务安全续跑 | 当前可靠性基础；不含 take 选择 |
 | [#8 · Local takes](https://github.com/skaiy/h3.c-studio/issues/8) | A (#13) 已合并；B (#14) 待评审/合并 | A：后端 take schema、旧数据迁移与选择 API；B：比较/采用 UI、下游连续性警告 | #7、A 已合并；B 直接到 main |
-| [#9 · Local reference sets](https://github.com/skaiy/h3.c-studio/issues/9) | A 本分支实现，待评审/合并；B 尚未开始 | A：本地 assets/参考集 API；B：项目内管理与选择器 UI | #7、#8 A 已合并；不依赖 #14 UI；B 等 A 合并 |
+| [#9 · Local reference sets](https://github.com/skaiy/h3.c-studio/issues/9) | A (#16) 已合并；B 尚未开始 | A：本地 assets/参考集 API；B：项目内管理与选择器 UI | #7、#8 A、#9 A 已合并；不依赖 #14 UI；B 从最新 main 开发 |
 | [#10 · Lightweight edit/export](https://github.com/skaiy/h3.c-studio/issues/10) | 规划中 | A：edit manifest、后端导出与 fixture 测试；B：最小 trim/配乐 UI | #7、#8 的选定 take 语义合并；B 等 A 合并 |
 | [#11 · Song Storyboard](https://github.com/skaiy/h3.c-studio/issues/11) | 规划中，仅可行性实验 | 小型离线切段/对齐原型，记录实验结果后再决定产品 UI | 先 #7；产品化前需 #9 参考集与 #10 基础导出契约 |
 

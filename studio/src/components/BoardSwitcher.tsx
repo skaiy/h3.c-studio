@@ -86,7 +86,7 @@ export default function BoardSwitcher({ boards, currentId, onRefresh, beforeMuta
     await api.deleteBoard(b.id)
     onRefresh()
     if (b.id === currentId) {
-      const rest = (await api.boards().catch(() => [] as BoardSummary[])).filter((x) => x.id !== b.id)
+      const rest = (await api.boards()).filter((x) => x.id !== b.id)
       if (rest.length) nav(`/b/${rest[0].id}`)
       else await createBoard()
       setOpen(false)

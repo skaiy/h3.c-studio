@@ -45,6 +45,7 @@
 ### 深度阅读
 
 - [h3.c vs 其他视频生成框架：优劣势分析](docs/h3c-vs-other-stacks.md)——和 SGLang / ComfyUI / VDN / MLX-H3 怎么选
+- [分镜持久化恢复](docs/persistence-recovery.md)——加载失败时阻止写入、保留原件与人工恢复步骤（#15，本分支）
 - [本地个人视频工作流路线图](docs/local-personal-workflow.md)——依赖、PR 拆分、数据契约与验收门槛；#7 已合并，#8 后端契约在本分支，UI 与 #9–#11 尚未交付
 
 ### 快速开始
@@ -132,6 +133,7 @@ This repository forks h3.c and adds a `studio/` web workbench: a prompt studio, 
 ### Further reading
 
 - [h3.c vs other video generation stacks](docs/h3c-vs-other-stacks.md) — how to choose between h3.c, SGLang, ComfyUI, VDN and MLX-H3
+- [Storyboard persistence recovery](docs/persistence-recovery.md) — write blocking, original-file preservation and manual recovery (#15, in this branch)
 - [Local personal video workflow roadmap](docs/local-personal-workflow.md) — dependencies, PR splits, data contracts and acceptance gates; #7 is merged, the #8 backend contract is in this branch, while its UI and #9–#11 are not delivered
 
 ### Quick start

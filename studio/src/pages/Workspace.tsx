@@ -43,15 +43,39 @@ export default function Workspace() {
   const [libraryVideo, setLibraryVideo] = useState<string | null>(null)
   const operationLock = useRef(new Set<string>())
   const jobsRequest = useRef(0)
+  const boardsRequest = useRef(0)
+  const boardRequests = useRef(new Map<string, number>())
+  const [listError, setListError] = useState<string | null>(null)
+  const [boardLoadErrors, setBoardLoadErrors] = useState<Record<string, string | undefined>>({})
+  const [loadAttempt, setLoadAttempt] = useState(0)
+  const loadError = (boardId ? boardLoadErrors[boardId] : undefined) ?? listError
 
-  const refreshBoards = useCallback(async () => {
-    try { setBoards(await api.boards()) } catch { /* backend down */ }
+  const refreshBoards = useCallback(async (isCurrent: () => boolean = () => true) => {
+    const request = ++boardsRequest.current
+    const isLatest = () => isCurrent() && request === boardsRequest.current
+    try {
+      const list = await api.boards()
+      if (!isLatest()) return
+      setBoards(list)
+      setListError(null)
+      return list
+    } catch (error) {
+      if (isLatest()) setListError(error instanceof Error ? error.message : '')
+    }
   }, [])
 
-  const refreshBoard = useCallback(async (id: string) => {
+  const refreshBoard = useCallback(async (id: string, isCurrent: () => boolean = () => true) => {
+    const request = (boardRequests.current.get(id) ?? 0) + 1
+    boardRequests.current.set(id, request)
+    const isLatest = () => isCurrent() && request === boardRequests.current.get(id)
     try {
-      drafts.receive(await api.board(id))
-    } catch { /* deleted elsewhere */ }
+      const loaded = await api.board(id)
+      if (!isLatest()) return
+      drafts.receive(loaded)
+      setBoardLoadErrors((errors) => ({ ...errors, [id]: undefined }))
+    } catch (error) {
+      if (isLatest()) setBoardLoadErrors((errors) => ({ ...errors, [id]: error instanceof Error ? error.message : '' }))
+    }
   }, [drafts])
 
   useEffect(() => {
@@ -64,26 +88,33 @@ export default function Workspace() {
 
   // 路由解析：无 boardId 时跳最近修改板；无板则新建一块
   useEffect(() => {
-    (async () => {
-      await refreshBoards()
-      if (boardId) return
-      const list = await api.boards().catch(() => [] as BoardSummary[])
+    let cancelled = false
+    void (async () => {
+      const list = await refreshBoards(() => !cancelled)
+      // Only a successful empty list permits creation, never an unavailable list.
+      if (cancelled || !list || boardId) return
       if (list.length) nav(`/b/${list[0].id}`, { replace: true })
       else {
-        const b = await api.saveBoard({ id: '', name: '未命名分镜', chain: true, shots: [], status: 'idle', result: null, createdAt: 0, modifiedAt: 0 })
-        nav(`/b/${b.id}`, { replace: true })
+        try {
+          const b = await api.saveBoard({ id: '', name: '未命名分镜', chain: true, shots: [], status: 'idle', result: null, createdAt: 0, modifiedAt: 0 })
+          if (!cancelled) nav(`/b/${b.id}`, { replace: true })
+        } catch (error) {
+          if (!cancelled) setListError(error instanceof Error ? error.message : '')
+        }
       }
     })()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [boardId])
+    return () => { cancelled = true }
+  }, [boardId, loadAttempt, nav, refreshBoards])
 
   useEffect(() => {
     if (!boardId) return
+    let cancelled = false
     // The per-board store rejects stale polls and retains dirty drafts.
-    refreshBoard(boardId)
-    const t = setInterval(() => refreshBoard(boardId), 2500)
-    return () => clearInterval(t)
-  }, [boardId, refreshBoard])
+    const refresh = () => refreshBoard(boardId, () => !cancelled)
+    refresh()
+    const t = setInterval(refresh, 2500)
+    return () => { cancelled = true; clearInterval(t) }
+  }, [boardId, loadAttempt, refreshBoard])
 
   // Reset sequence-preview when switching boards. Derived from a render-time comparison
   // (react.dev/learn/you-might-not-need-an-effect#adjusting-some-state-when-a-prop-changes)
@@ -264,10 +295,31 @@ export default function Workspace() {
     })
   }
 
+  const settingsButton = (
+    <button onClick={() => setSettingsOpen(true)} aria-label={t('settingsTitle')} title={t('settingsTitle')}
+      className="bar linkfade border-l border-border !text-white">
+      <Settings className="size-4" />
+    </button>
+  )
+  const loadErrorBanner = loadError !== null && (
+    <div role="alert" className="px-3 py-2 text-xs text-red-300 border-b border-border">
+      <p>{t('boardLoadFailed')}{loadError && `: ${loadError}`}</p>
+      <p className="mt-1">{t('boardLoadHint')}</p>
+      <button className="mt-2 underline" onClick={() => setLoadAttempt((attempt) => attempt + 1)}>{t('retryLoad')}</button>
+    </div>
+  )
+
   if (!board) {
     return (
-      <div className="h-full flex items-center justify-center bg-background text-muted-foreground text-[12px] uppercase tracking-[0.2em]">
-        H3 STUDIO…
+      <div className="h-full flex flex-col bg-background text-foreground">
+        <div className="flex items-stretch border-b border-border shrink-0">
+          <div className="bar-invert">{t('title')}</div>
+          <div className="flex-1" />
+          {settingsButton}
+        </div>
+        <SettingsSheet open={settingsOpen} onOpenChange={setSettingsOpen} />
+        {loadErrorBanner}
+        {loadError === null && <div className="flex-1 flex items-center justify-center text-muted-foreground text-[12px] uppercase tracking-[0.2em]">H3 STUDIO…</div>}
       </div>
     )
   }
@@ -289,12 +341,10 @@ export default function Workspace() {
         <div className="flex-1" />
         <div className="bar mono normal-case tracking-normal">{device || '…'}</div>
         <div className="bar">{jobs.filter((j) => j.status === 'queued' || j.status === 'running').length} {t('activeJobs')}</div>
-        <button onClick={() => setSettingsOpen(true)} aria-label={t('settingsTitle')} title={t('settingsTitle')}
-          className="bar linkfade border-l border-border !text-white">
-          <Settings className="size-4" />
-        </button>
+        {settingsButton}
       </div>
       <SettingsSheet open={settingsOpen} onOpenChange={setSettingsOpen} />
+      {loadErrorBanner}
       {(saveState.error || operationError) && (
         <div role="alert" className="px-3 py-2 text-xs text-red-300 border-b border-border">
           {saveState.error ? `${t('saveFailed')}: ${saveState.error.message}` : operationError}
