@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, useSyncExternalStore } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { Settings } from 'lucide-react'
-import { api, type Board, type BoardSummary, type GenParams, type Job, type Shot, type VideoItem } from '@/lib/api'
+import { api, type Board, type BoardSummary, type Job, type Shot, type VideoItem } from '@/lib/api'
+import { BoardDrafts } from '@/lib/boardDrafts'
 import { useI18n } from '@/lib/useI18n'
 import { insertShotAt, duplicateShotAt, removeShotAt, moveShot, nextSelectedAfterDelete } from '@/lib/shotOps'
 import BoardSwitcher from '@/components/BoardSwitcher'
@@ -13,7 +14,7 @@ import SettingsSheet from '@/components/SettingsSheet'
 
 function newShot(): Shot {
   return {
-    id: `s${Date.now().toString(36)}`, prompt: '', width: 768, height: 768,
+    id: `s${crypto.randomUUID()}`, prompt: '', width: 768, height: 768,
     seconds: 10, steps: 20, layers: 45, reuse: 2, seed: 42, turbo: false,
     first_frame: null, last_frame: null, status: 'idle', output: null, job_id: null,
   }
@@ -24,18 +25,24 @@ export default function Workspace() {
   const nav = useNavigate()
   const { boardId } = useParams()
   const [boards, setBoards] = useState<BoardSummary[]>([])
-  const [board, setBoard] = useState<Board | null>(null)
+  const [drafts] = useState(() => new BoardDrafts(api.saveBoard))
+  useSyncExternalStore(drafts.subscribe, drafts.snapshot)
+  const board = drafts.get(boardId)
+  const saveState = drafts.state(boardId)
   const [selected, setSelected] = useState(0)
   const [jobs, setJobs] = useState<Job[]>([])
   const [videos, setVideos] = useState<VideoItem[]>([])
   const [watchJob, setWatchJob] = useState(false)
   const [resumedFrom, setResumedFrom] = useState<string | null>(null)
-  const [saveState, setSaveState] = useState<'saved' | 'saving'>('saved')
   const [device, setDevice] = useState('')
   const [settingsOpen, setSettingsOpen] = useState(false)
   const [sequenceIdx, setSequenceIdx] = useState<number | null>(null)
-  const dirtyUntil = useRef(0)
-  const saveTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [operationBoards, setOperationBoards] = useState<string[]>([])
+  const [operationErrors, setOperationErrors] = useState<Record<string, string>>({})
+  const operationError = boardId ? operationErrors[boardId] : ''
+  const [libraryVideo, setLibraryVideo] = useState<string | null>(null)
+  const operationLock = useRef(new Set<string>())
+  const jobsRequest = useRef(0)
 
   const refreshBoards = useCallback(async () => {
     try { setBoards(await api.boards()) } catch { /* backend down */ }
@@ -43,10 +50,17 @@ export default function Workspace() {
 
   const refreshBoard = useCallback(async (id: string) => {
     try {
-      const b = await api.board(id)
-      if (Date.now() > dirtyUntil.current) setBoard(b)
+      drafts.receive(await api.board(id))
     } catch { /* deleted elsewhere */ }
-  }, [])
+  }, [drafts])
+
+  useEffect(() => {
+    const warn = (event: BeforeUnloadEvent) => {
+      if (drafts.hasUnsaved()) { event.preventDefault(); event.returnValue = '' }
+    }
+    window.addEventListener('beforeunload', warn)
+    return () => { window.removeEventListener('beforeunload', warn); drafts.dispose() }
+  }, [drafts])
 
   // 路由解析：无 boardId 时跳最近修改板；无板则新建一块
   useEffect(() => {
@@ -65,9 +79,7 @@ export default function Workspace() {
 
   useEffect(() => {
     if (!boardId) return
-    // Data-fetching + polling Effect (react.dev/learn/synchronizing-with-effects#fetching-data);
-    // setBoard only actually runs after the `await` inside refreshBoard, never synchronously.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    // The per-board store rejects stale polls and retains dirty drafts.
     refreshBoard(boardId)
     const t = setInterval(() => refreshBoard(boardId), 2500)
     return () => clearInterval(t)
@@ -80,23 +92,28 @@ export default function Workspace() {
   if (boardId !== seenBoardId) {
     setSeenBoardId(boardId)
     setSequenceIdx(null)
+    setSelected(0)
+    setLibraryVideo(null)
   }
 
   const refreshJobs = useCallback(async () => {
+    const request = ++jobsRequest.current
     try {
       const [j, v] = await Promise.all([api.jobs(), api.videos()])
       const run = j.find((x) => x.status === 'running')
+      let updated = j
       if (run) {
         const detail = await api.job(run.id)
-        setJobs(j.map((x) => (x.id === run.id ? detail : x)))
-      } else setJobs(j)
+        updated = j.map((x) => (x.id === run.id ? detail : x))
+      }
+      if (request !== jobsRequest.current) return
+      setJobs(updated)
       setVideos(v)
     } catch { /* ignore */ }
   }, [])
 
   useEffect(() => {
-    // Data-fetching + polling Effect, same rationale as the board-polling one above.
-    // eslint-disable-next-line react-hooks/set-state-in-effect
+    // Ignore out-of-order job responses, just as board revisions ignore stale polls.
     refreshJobs()
     api.info().then((r) => {
       const m = r.info.match(/Device: (.+)/)
@@ -115,84 +132,44 @@ export default function Workspace() {
     if (runningJob) setWatchJob(true)
   }
 
-  // 自动保存（防抖 800ms）
-  const persist = useCallback((b: Board) => {
-    if (saveTimer.current) clearTimeout(saveTimer.current)
-    setSaveState('saving')
-    saveTimer.current = setTimeout(async () => {
-      await api.saveBoard(b)
-      dirtyUntil.current = Date.now() + 1200
-      setSaveState('saved')
-      refreshBoards()
-    }, 800)
-  }, [refreshBoards])
-
+  // Every mutation captures board/shot identity, never a selection index across awaits.
   const patchBoard = useCallback((fn: (b: Board) => Board) => {
-    setBoard((prev) => {
-      if (!prev) return prev
-      const next = fn({ ...prev, shots: prev.shots.map((s) => ({ ...s })) })
-      persist(next)
-      return next
-    })
-  }, [persist])
+    if (!boardId) return
+    if (operationLock.current.has(boardId) || drafts.get(boardId)?.status === 'running') throw new Error(t('running'))
+    drafts.edit(boardId, fn)
+  }, [boardId, drafts, t])
 
+  const shot = board?.shots[selected] ?? null
+  const selectedShotId = shot?.id
   const patchShot = useCallback((patch: Partial<Shot>) => {
     patchBoard((b) => ({
       ...b,
-      shots: b.shots.map((s, i) => (i === selected ? { ...s, ...patch } : s)),
+      shots: b.shots.map((s) => (s.id === selectedShotId ? { ...s, ...patch } : s)),
     }))
-  }, [patchBoard, selected])
+  }, [patchBoard, selectedShotId])
 
-  const flushSave = async (): Promise<Board | null> => {
-    if (saveTimer.current) clearTimeout(saveTimer.current)
-    if (!board) return null
-    const saved = await api.saveBoard(board)
-    dirtyUntil.current = Date.now() + 1200
-    setSaveState('saved')
-    setBoard(saved)
-    return saved
+  const operate = async (id: string, action: () => Promise<unknown>) => {
+    if (operationLock.current.has(id)) return
+    operationLock.current.add(id)
+    setOperationBoards((ids) => [...ids, id])
+    setOperationErrors((errors) => ({ ...errors, [id]: '' }))
+    try { await action() }
+    catch (error) { setOperationErrors((errors) => ({ ...errors, [id]: error instanceof Error ? error.message : t('operationFailed') })) }
+    finally {
+      await Promise.all([refreshBoard(id), refreshJobs(), refreshBoards()])
+      operationLock.current.delete(id)
+      setOperationBoards((ids) => ids.filter((pending) => pending !== id))
+    }
   }
-
-  const shot = board?.shots[selected] ?? null
 
   const generateShot = async () => {
     if (!board || !shot) return
-    const saved = await flushSave()
-    if (!saved) return
-    const s = saved.shots[selected]
-    // 接力：非首镜且无显式首帧时，自动取上镜末帧
-    let firstFrame = s.first_frame
-    if (saved.chain && selected > 0 && !firstFrame) {
-      const prevOutput = saved.shots[selected - 1]?.output
-      if (prevOutput) {
-        const r = await api.extractLastFrame(prevOutput)
-        firstFrame = r.name
-        patchShot({ first_frame: r.name })
-        await flushSave()
-      }
-    }
-    const s2 = board?.shots[selected] ?? s
-    const params: GenParams = {
-      prompt: s2.prompt,
-      width: s2.width, height: s2.height,
-      seconds: s2.seconds, frames: null,
-      steps: s2.steps, layers: s2.layers, reuse: s2.reuse,
-      seed: s2.seed,
-      first_frame: firstFrame,
-      last_frame: s2.last_frame,
-      ref_images: (s2 as unknown as { ref_images?: string[] }).ref_images ?? [],
-      ref_audio: (s2 as unknown as { ref_audio?: string[] }).ref_audio ?? [],
-      token_reduction: false,
-      turbo: s2.turbo ?? false,
-      checkpoint_after_step: (s2 as unknown as { checkpoint_after_step?: number }).checkpoint_after_step || null,
-      resume: null,
-      board_id: saved.id,
-      shot_id: s2.id,
-      label: `[${saved.name}] 镜头 ${selected + 1}`,
-    } as GenParams
-    await api.generate(params)
-    patchShot({ status: 'queued' })
-    await refreshJobs()
+    const id = board.id, shotId = shot.id
+    await operate(id, async () => {
+      await drafts.flush(id)
+      await api.generateShot(id, shotId)
+      setLibraryVideo(null)
+    })
   }
 
   const insertShot = (at: number) => {
@@ -204,7 +181,7 @@ export default function Workspace() {
     patchBoard((b) => ({
       ...b,
       shots: duplicateShotAt(b.shots, i, (src) => ({
-        ...src, id: `s${Date.now().toString(36)}`, status: 'idle', output: null, job_id: null,
+        ...src, id: `s${crypto.randomUUID()}`, status: 'idle', output: null, job_id: null,
       })),
     }))
     setSelected(i + 1)
@@ -227,50 +204,52 @@ export default function Workspace() {
   }
 
   const runAll = async () => {
-    const saved = await flushSave()
-    if (!saved) return
-    await api.runBoard(saved.id)
-    setBoard((b) => (b ? { ...b, status: 'running' } : b))
+    if (!board) return
+    const id = board.id
+    await operate(id, async () => { await drafts.flush(id); await api.runBoard(id) })
   }
 
   const concat = async () => {
-    const saved = await flushSave()
-    if (!saved) return
-    const r = await api.concatBoard(saved.id)
-    if (r.output) {
-      setBoard((b) => (b ? { ...b, result: r.output } : b))
-      refreshJobs()
-    }
+    if (!board) return
+    const id = board.id
+    await operate(id, async () => {
+      await drafts.flush(id)
+      await api.concatBoard(id)
+      setLibraryVideo(null)
+    })
   }
 
   const resumeDraft = async (job: Job) => {
-    if (!job.checkpoint || !shot) return
-    const p = job.params as Record<string, unknown>
-    await api.generate({
-      prompt: shot.prompt,
-      width: (p.width as number) ?? 512, height: (p.height as number) ?? 512,
-      seconds: (p.seconds as number) ?? 6, frames: null,
-      steps: (p.steps as number) ?? 20, layers: (p.layers as number) ?? 45,
-      reuse: (p.reuse as number) ?? 2, seed: (p.seed as number) ?? 42,
-      first_frame: (p.first_frame as string) ?? null, last_frame: (p.last_frame as string) ?? null,
-      ref_images: [], ref_audio: [], token_reduction: false, turbo: (p.turbo as boolean) ?? false,
-      checkpoint_after_step: null, resume: job.checkpoint,
-      board_id: board?.id ?? null, shot_id: shot.id,
-      label: `▶ 续跑 ${job.label}`,
-    } as GenParams)
-    setResumedFrom(job.checkpoint)
-    await refreshJobs()
+    if (!job.checkpoint || typeof job.params.board_id !== 'string') return
+    const id = job.params.board_id
+    await operate(id, async () => {
+      if (drafts.get(id)) await drafts.flush(id)
+      await api.resumeJob(job.id)
+      setResumedFrom(job.checkpoint!)
+    })
   }
 
   const chainFromLibrary = async (v: VideoItem) => {
-    const r = await api.extractLastFrame(v.name)
-    patchShot({ first_frame: r.name })
+    if (!boardId) return
+    const id = boardId
+    try {
+      const r = await api.extractLastFrame(v.name)
+      patchShot({ first_frame: r.name })
+    } catch (error) { setOperationErrors((errors) => ({ ...errors, [id]: error instanceof Error ? error.message : t('operationFailed') })) }
   }
 
-  const draftJob = jobs.find((j) => j.status === 'done' && j.checkpoint && j.checkpoint !== resumedFrom) ?? null
+  const draftJob = jobs.find((j) => j.status === 'done' && j.checkpoint && j.checkpoint !== resumedFrom
+    && j.params.board_id === board?.id && j.params.shot_id === shot?.id) ?? null
   const doneOutputs = board?.shots.filter((s) => s.output).map((s) => s.output!) ?? []
   const sequencing = sequenceIdx !== null
-  const currentVideo = sequencing ? (doneOutputs[sequenceIdx!] ?? null) : (board?.result ?? shot?.output ?? null)
+  const currentVideo = sequencing ? (doneOutputs[sequenceIdx!] ?? null) : (libraryVideo ?? board?.result ?? shot?.output ?? null)
+  const boardBusy = board?.status === 'running' || operationBoards.includes(boardId ?? '')
+
+  const reloadDiscardingDraft = async () => {
+    if (!board || !window.confirm(t('discardDraftConfirm'))) return
+    try { drafts.discard(await api.board(board.id)) }
+    catch (error) { setOperationErrors((errors) => ({ ...errors, [board.id]: error instanceof Error ? error.message : t('operationFailed') })) }
+  }
 
   const toggleSequence = () => {
     if (sequencing) { setSequenceIdx(null); return }
@@ -298,10 +277,12 @@ export default function Workspace() {
       {/* header */}
       <div className="flex items-stretch border-b border-border shrink-0">
         <div className="bar-invert">{t('title')}</div>
-        <BoardSwitcher boards={boards} currentId={board.id} onRefresh={refreshBoards} />
-        <div className="bar text-muted-foreground">{saveState === 'saved' ? `● ${t('saved')}` : `○ ${t('saving')}`}</div>
+        <BoardSwitcher boards={boards} currentId={board.id} onRefresh={refreshBoards}
+          beforeMutate={async (id) => { if (drafts.get(id)) await drafts.flush(id) }} />
+        <div className="bar text-muted-foreground">{saveState.error ? t('saveFailed') : saveState.dirty || saveState.saving ? `○ ${t('saving')}` : `● ${t('saved')}`}</div>
         <input
           value={board.name}
+          disabled={boardBusy}
           onChange={(e) => patchBoard((b) => ({ ...b, name: e.target.value }))}
           className="bar bg-transparent outline-none border-b border-transparent hover:border-border focus:border-white text-white min-w-[120px]"
         />
@@ -314,12 +295,22 @@ export default function Workspace() {
         </button>
       </div>
       <SettingsSheet open={settingsOpen} onOpenChange={setSettingsOpen} />
+      {(saveState.error || operationError) && (
+        <div role="alert" className="px-3 py-2 text-xs text-red-300 border-b border-border">
+          {saveState.error ? `${t('saveFailed')}: ${saveState.error.message}` : operationError}
+          {saveState.error && <>
+            <button className="ml-3 underline" disabled={saveState.saving} onClick={() => operate(board.id, () => drafts.flush(board.id))}>{t('retrySave')}</button>
+            <button className="ml-3 underline" disabled={saveState.saving} onClick={reloadDiscardingDraft}>{t('reloadBoard')}</button>
+          </>}
+        </div>
+      )}
 
       <div className="flex flex-1 min-h-0">
         <ShotRail
           board={board}
+          disabled={boardBusy}
           selected={selected}
-          onSelect={(i) => { setSequenceIdx(null); setSelected(i) }}
+          onSelect={(i) => { setSequenceIdx(null); setLibraryVideo(null); setSelected(i) }}
           onAddShot={addShot}
           onInsertShot={insertShot}
           onDuplicateShot={duplicateShot}
@@ -335,7 +326,7 @@ export default function Workspace() {
           runningJob={runningJob}
           watchJob={watchJob}
           onWatchJob={setWatchJob}
-          draftJob={draftJob}
+          draftJob={boardBusy ? null : draftJob}
           onResume={resumeDraft}
           hasShots={board.shots.length > 0}
           onAddShot={addShot}
@@ -343,14 +334,17 @@ export default function Workspace() {
           onSequenceEnded={advanceSequence}
         />
         {shot && (
+          <fieldset disabled={boardBusy} className="border-0 p-0 m-0 flex min-h-0 shrink-0">
           <ShotInspector
+            key={board.id}
             shot={shot}
             chain={board.chain}
             isFirst={selected === 0}
             onChange={patchShot}
             onGenerate={generateShot}
-            generating={false}
+            generating={boardBusy}
           />
+          </fieldset>
         )}
       </div>
 
@@ -358,8 +352,7 @@ export default function Workspace() {
         videos={videos}
         current={currentVideo}
         onPlay={(name) => {
-          // 库点播：临时清掉板 result 展示逻辑交给 PreviewPane（currentVideo 优先 result）
-          setBoard((b) => (b ? { ...b, result: name } : b))
+          setLibraryVideo(name)
           setWatchJob(false)
         }}
         onChain={chainFromLibrary}

@@ -2,32 +2,22 @@ import { useRef, useState } from 'react'
 import { api, type Shot } from '@/lib/api'
 import { type I18nKey } from '@/lib/i18n'
 import { useI18n } from '@/lib/useI18n'
+import { translate, type StudioI18nKey } from '@/lib/i18nResources'
+import {
+  FIELD_KEYS, type FieldKey, changePromptMode, editSimplePrompt, editStructuredField,
+  getPromptFields, getConditioningIssues, isImportedScene,
+} from '@/lib/promptFields'
 import { Button } from '@/components/ui/button'
 import { Slider } from '@/components/ui/slider'
 import { Textarea } from '@/components/ui/textarea'
 
-// Structured "Context-IR" prompt editor (Scene / Action / Camera / Look / Audio),
-// inspired by Henninges/h3-studio's advanced mode: each field falls back to a
-// sensible default when left blank, so users don't have to write out every
-// clause by hand to get a well-formed five-part prompt.
-const FIELD_KEYS = ['scene', 'action', 'camera', 'look', 'audio'] as const
-type FieldKey = (typeof FIELD_KEYS)[number]
-const FIELD_LABELS: Record<FieldKey, string> = {
-  scene: 'Scene', action: 'Action', camera: 'Camera', look: 'Look', audio: 'Audio',
+const FIELD_LABEL_KEYS: Record<FieldKey, StudioI18nKey> = {
+  scene: 'promptFieldScene', action: 'promptFieldAction', camera: 'promptFieldCamera',
+  look: 'promptFieldLook', audio: 'promptFieldAudio',
 }
-const FIELD_DEFAULTS: Record<FieldKey, string> = {
-  scene: 'a softly lit interior room',
-  action: 'the subject moves naturally',
-  camera: 'static medium shot',
-  look: 'realistic, cinematic lighting',
-  audio: 'ambient sound matching the scene',
-}
-function emptyFields(): Record<FieldKey, string> {
-  return { scene: '', action: '', camera: '', look: '', audio: '' }
-}
-function assembleStructuredPrompt(fields: Record<FieldKey, string>): string {
-  const val = (k: FieldKey) => fields[k].trim() || FIELD_DEFAULTS[k]
-  return FIELD_KEYS.map((k) => `${FIELD_LABELS[k]}: ${val(k)}.`).join(' ')
+const FIELD_PLACEHOLDER_KEYS: Record<FieldKey, StudioI18nKey> = {
+  scene: 'promptDefaultScene', action: 'promptDefaultAction', camera: 'promptDefaultCamera',
+  look: 'promptDefaultLook', audio: 'promptDefaultAudio',
 }
 
 const SIZES = [
@@ -59,9 +49,10 @@ interface SlotProps {
   onAdd: (f: File) => void
   onRemove: (name: string) => void
   multiple?: boolean
+  disabled?: boolean
 }
 
-function UploadSlot({ title, files, removeLabel, onAdd, onRemove, multiple }: SlotProps) {
+function UploadSlot({ title, files, removeLabel, onAdd, onRemove, multiple, disabled }: SlotProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   return (
     <div>
@@ -69,20 +60,20 @@ function UploadSlot({ title, files, removeLabel, onAdd, onRemove, multiple }: Sl
       <div className="flex flex-wrap gap-1 px-2 pb-2">
         {files.map((f) => (
           <div key={f} className="relative group w-14 h-14 border border-border overflow-hidden">
-            <img src={`/api/media/${f}`} className="w-full h-full object-cover" />
-            <button onClick={() => onRemove(f)}
+            <img src={`/api/media/${encodeURIComponent(f)}`} alt={title} className="w-full h-full object-cover" />
+            <button disabled={disabled} onClick={() => onRemove(f)}
               className="absolute inset-0 bg-black/70 text-white text-xs opacity-0 group-hover:opacity-100 transition-opacity">
               {removeLabel}
             </button>
           </div>
         ))}
         {(multiple || files.length === 0) && (
-          <button onClick={() => inputRef.current?.click()}
+          <button disabled={disabled} aria-label={title} onClick={() => inputRef.current?.click()}
             className="w-14 h-14 border border-dashed border-muted-foreground/50 text-muted-foreground text-lg hover:text-white hover:border-white transition-colors">
             +
           </button>
         )}
-        <input ref={inputRef} type="file" accept="image/*" className="hidden"
+        <input ref={inputRef} type="file" accept="image/*" aria-label={title} disabled={disabled} className="hidden"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) onAdd(f); e.target.value = '' }} />
       </div>
     </div>
@@ -95,12 +86,13 @@ interface AudioSlotProps {
   removeLabel: string
   onAdd: (f: File) => void
   onRemove: (name: string) => void
+  disabled?: boolean
 }
 
 /** Ordered standalone Ref2VA audio clips (--ref-audio) — e.g. lip-sync / music-video
  * conditioning. Uses inline <audio controls> instead of the square thumbnails
  * UploadSlot uses for images, since a filename + playhead is more useful than a tile. */
-function AudioSlot({ title, files, removeLabel, onAdd, onRemove }: AudioSlotProps) {
+function AudioSlot({ title, files, removeLabel, onAdd, onRemove, disabled }: AudioSlotProps) {
   const inputRef = useRef<HTMLInputElement>(null)
   return (
     <div>
@@ -108,18 +100,18 @@ function AudioSlot({ title, files, removeLabel, onAdd, onRemove }: AudioSlotProp
       <div className="flex flex-col gap-1 px-2 pb-2">
         {files.map((f) => (
           <div key={f} className="flex items-center gap-1.5 border border-border px-1.5 py-1">
-            <audio controls src={`/api/media/${f}`} className="h-7 flex-1 min-w-0" />
-            <button onClick={() => onRemove(f)}
+            <audio controls src={`/api/media/${encodeURIComponent(f)}`} className="h-7 flex-1 min-w-0" />
+            <button disabled={disabled} onClick={() => onRemove(f)}
               className="shrink-0 text-[10px] text-muted-foreground hover:text-white px-1">
               {removeLabel}
             </button>
           </div>
         ))}
-        <button onClick={() => inputRef.current?.click()}
+        <button disabled={disabled} aria-label={title} onClick={() => inputRef.current?.click()}
           className="h-7 border border-dashed border-muted-foreground/50 text-muted-foreground text-[11px] hover:text-white hover:border-white transition-colors">
           +
         </button>
-        <input ref={inputRef} type="file" accept="audio/*" className="hidden"
+        <input ref={inputRef} type="file" accept="audio/*" aria-label={title} disabled={disabled} className="hidden"
           onChange={(e) => { const f = e.target.files?.[0]; if (f) onAdd(f); e.target.value = '' }} />
       </div>
     </div>
@@ -136,36 +128,40 @@ interface Props {
 }
 
 export default function ShotInspector({ shot, chain, isFirst, onChange, onGenerate, generating }: Props) {
-  const { t } = useI18n()
-  const [promptMode, setPromptMode] = useState<'simple' | 'structured'>('simple')
-  const [fields, setFields] = useState<Record<FieldKey, string>>(emptyFields())
-  // Structured fields are a per-shot input aid, not persisted state: reset them
-  // whenever the selected shot changes so they never leak between shots. Done
-  // during render (not in an effect) per React's "adjusting state" guidance.
-  const [fieldsShotId, setFieldsShotId] = useState(shot.id)
-  if (fieldsShotId !== shot.id) {
-    setFieldsShotId(shot.id)
-    setFields(emptyFields())
-  }
+  const { lang } = useI18n()
+  const t = (key: StudioI18nKey) => translate(lang, key)
+  const promptMode = shot.prompt_mode ?? 'simple'
+  const fields = getPromptFields(shot)
+  const conditioning = getConditioningIssues(shot, chain, isFirst)
+  const pendingUploads = useRef(new Set<string>())
+  const [uploadStates, setUploadStates] = useState<Record<string, 'uploading' | 'failed' | undefined>>({})
+  const uploading = uploadStates[shot.id] === 'uploading'
   const pIdx = presetIndexOf(shot)
   const sizeIdx = (() => { const i = SIZES.findIndex((z) => z.w === shot.width && z.h === shot.height); return i >= 0 ? i : 1 })()
   const firstFrame = shot.first_frame ? [shot.first_frame] : []
   const lastFrame = shot.last_frame ? [shot.last_frame] : []
-  const refImages: string[] = (shot as unknown as { ref_images?: string[] }).ref_images ?? []
-  const refAudio: string[] = (shot as unknown as { ref_audio?: string[] }).ref_audio ?? []
-  const ckptSteps = (shot as unknown as { checkpoint_after_step?: number }).checkpoint_after_step ?? 0
+  const refImages = shot.ref_images ?? []
+  const refAudio = shot.ref_audio ?? []
+  const ckptSteps = shot.checkpoint_after_step ?? 0
+  const seconds = shot.frames != null ? shot.frames / 24 : shot.seconds ?? 56 / 24
 
-  const up = (key: 'first_frame' | 'last_frame') => async (f: File) => {
-    const r = await api.upload(f)
-    onChange({ [key]: r.name } as Partial<Shot>)
-  }
-  const upRef = async (f: File) => {
-    const r = await api.upload(f)
-    onChange({ ref_images: [...refImages, r.name] } as Partial<Shot>)
-  }
-  const upRefAudio = async (f: File) => {
-    const r = await api.upload(f)
-    onChange({ ref_audio: [...refAudio, r.name] } as Partial<Shot>)
+  const upload = (patch: (name: string) => Partial<Shot>) => async (file: File) => {
+    // The parent binds onChange to a shot ID. Capture that callback before awaiting,
+    // rather than using the newly selected shot's callback when the upload finishes.
+    const changeShot = onChange
+    const shotId = shot.id
+    if (pendingUploads.current.has(shotId)) return
+    pendingUploads.current.add(shotId)
+    setUploadStates((states) => ({ ...states, [shotId]: 'uploading' }))
+    try {
+      const result = await api.upload(file)
+      changeShot(patch(result.name))
+      setUploadStates((states) => ({ ...states, [shotId]: undefined }))
+    } catch {
+      setUploadStates((states) => ({ ...states, [shotId]: 'failed' }))
+    } finally {
+      pendingUploads.current.delete(shotId)
+    }
   }
 
   const busy = shot.status === 'running' || shot.status === 'queued'
@@ -176,7 +172,7 @@ export default function ShotInspector({ shot, chain, isFirst, onChange, onGenera
         <span>{t('prompt')}</span>
         <div className="flex gap-1">
           {(['simple', 'structured'] as const).map((m) => (
-            <button key={m} onClick={() => setPromptMode(m)}
+            <button key={m} aria-pressed={m === promptMode} onClick={() => onChange(changePromptMode(shot, m))}
               className={`text-[10px] px-1.5 py-0.5 border normal-case tracking-normal font-normal ${m === promptMode ? 'bg-black text-white border-black' : 'border-black/30 text-black/60 hover:text-black'}`}>
               {t(m === 'simple' ? 'promptModeSimple' : 'promptModeStructured')}
             </button>
@@ -185,22 +181,21 @@ export default function ShotInspector({ shot, chain, isFirst, onChange, onGenera
       </div>
       {promptMode === 'simple' ? (
         <div className="p-2">
-          <Textarea value={shot.prompt} onChange={(e) => onChange({ prompt: e.target.value })}
-            placeholder="Scene / Action / Camera / Look / Audio…"
+          <Textarea value={shot.prompt} aria-label={t('prompt')} onChange={(e) => onChange(editSimplePrompt(e.target.value))}
+            placeholder={t('promptHint')}
             className="min-h-[160px] bg-black/30 border-border rounded-none text-[13px] leading-relaxed mono" />
         </div>
       ) : (
         <div className="p-2 flex flex-col gap-1.5">
+          {isImportedScene(shot) && (
+            <p role="status" className="text-[11px] text-muted-foreground">{t('promptImportedScene')}</p>
+          )}
           {FIELD_KEYS.map((k) => (
             <div key={k}>
-              <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-0.5">{FIELD_LABELS[k]}</div>
-              <Textarea value={fields[k]}
-                onChange={(e) => {
-                  const next = { ...fields, [k]: e.target.value }
-                  setFields(next)
-                  onChange({ prompt: assembleStructuredPrompt(next) })
-                }}
-                placeholder={FIELD_DEFAULTS[k]}
+              <div className="text-[10px] uppercase tracking-wider text-muted-foreground mb-0.5">{t(FIELD_LABEL_KEYS[k])}</div>
+              <Textarea value={fields[k]} aria-label={t(FIELD_LABEL_KEYS[k])}
+                onChange={(e) => onChange(editStructuredField(shot, k, e.target.value))}
+                placeholder={t(FIELD_PLACEHOLDER_KEYS[k])}
                 className="min-h-[36px] bg-black/30 border-border rounded-none text-[12px] leading-snug mono" />
             </div>
           ))}
@@ -217,15 +212,15 @@ export default function ShotInspector({ shot, chain, isFirst, onChange, onGenera
         ))}
       </div>
 
-      <div className="bar">{t('duration')} · {shot.seconds.toFixed(1)}s</div>
+      <div className="bar">{t('duration')} · {seconds.toFixed(1)}s{shot.frames != null ? ` · ${shot.frames}f` : ''}</div>
       <div className="px-3 pb-2">
-        <Slider value={[shot.seconds]} onValueChange={([v]) => onChange({ seconds: v })} min={1} max={15} step={0.5} />
+        <Slider value={[seconds]} onValueChange={([v]) => onChange({ seconds: v, frames: null })} min={1} max={15} step={0.5} />
       </div>
 
       <div className="bar">{t('preset')}</div>
       <div className="grid grid-cols-2 gap-1 p-2">
         {PRESETS.map((p, i) => (
-          <button key={p.key} onClick={() => onChange({ steps: p.steps, layers: p.layers, reuse: p.reuse, turbo: p.turbo ?? false } as Partial<Shot>)}
+          <button key={p.key} onClick={() => onChange({ steps: p.steps, layers: p.layers, reuse: p.reuse, turbo: p.turbo ?? false })}
             className={`h-8 text-[11px] border transition-colors ${i === pIdx ? 'bg-white text-black border-white' : 'border-border text-muted-foreground hover:text-white'}`}>
             {t(p.key)}
           </button>
@@ -237,8 +232,8 @@ export default function ShotInspector({ shot, chain, isFirst, onChange, onGenera
 
       <div className="flex items-center justify-between px-2 py-1">
         <div className="bar">{t('ckptAfter')}</div>
-        <input type="number" value={ckptSteps} min={0} max={shot.steps}
-          onChange={(e) => onChange({ checkpoint_after_step: Math.max(0, parseInt(e.target.value) || 0) } as Partial<Shot>)}
+        <input type="number" value={ckptSteps} min={0} max={shot.steps - 1} aria-label={t('ckptAfter')}
+          onChange={(e) => onChange({ checkpoint_after_step: Math.max(0, parseInt(e.target.value) || 0) || null })}
           className="w-16 h-7 bg-black/30 border border-border px-2 text-[12px] mono outline-none" />
       </div>
 
@@ -255,21 +250,39 @@ export default function ShotInspector({ shot, chain, isFirst, onChange, onGenera
         </div>
       </div>
 
+      <label className="flex items-center gap-2 px-2 py-2 text-[11px]">
+        <input type="checkbox" checked={shot.token_reduction ?? false}
+          onChange={(e) => onChange({ token_reduction: e.target.checked })} />
+        {t('tokenReduction')}
+      </label>
+
       <div className="bar-invert mt-1">{t('conditioning')}</div>
-      {chain && !isFirst && !firstFrame.length && (
-        <div className="bar !h-6 text-muted-foreground/70 normal-case tracking-normal">⇢ 首帧自动继承上镜末帧</div>
+      {conditioning.autoChain && (
+        <p className="px-2 py-1 text-[11px] text-muted-foreground">{t('chainAutoHint')}</p>
       )}
-      <UploadSlot title={t('firstFrame')} files={firstFrame} removeLabel={t('remove')}
-        onAdd={up('first_frame')} onRemove={() => onChange({ first_frame: null })} />
-      <UploadSlot title={t('lastFrame')} files={lastFrame} removeLabel={t('remove')}
-        onAdd={up('last_frame')} onRemove={() => onChange({ last_frame: null })} />
-      <UploadSlot title={t('refImages')} files={refImages} multiple removeLabel={t('remove')}
-        onAdd={upRef} onRemove={(n) => onChange({ ref_images: refImages.filter((x) => x !== n) } as Partial<Shot>)} />
-      <AudioSlot title={t('refAudio')} files={refAudio} removeLabel={t('remove')}
-        onAdd={upRefAudio} onRemove={(n) => onChange({ ref_audio: refAudio.filter((x) => x !== n) } as Partial<Shot>)} />
+      {conditioning.errors.map((key) => (
+        <p key={key} role="alert" className="px-2 py-1 text-[11px] text-red-400">{t(key)}</p>
+      ))}
+      {conditioning.warnings.map((key) => (
+        <p key={key} role="status" className="px-2 py-1 text-[11px] text-amber-300">{t(key)}</p>
+      ))}
+      {uploading && <p role="status" className="px-2 py-1 text-[11px] text-muted-foreground">{t('uploading')}</p>}
+      {uploadStates[shot.id] === 'failed' && (
+        <p role="alert" className="px-2 py-1 text-[11px] text-red-400">{t('uploadFailed')}</p>
+      )}
+      <UploadSlot title={t('firstFrame')} files={firstFrame} removeLabel={t('remove')} disabled={uploading}
+        onAdd={upload((name) => ({ first_frame: name }))} onRemove={() => onChange({ first_frame: null })} />
+      <UploadSlot title={t('lastFrame')} files={lastFrame} removeLabel={t('remove')} disabled={uploading}
+        onAdd={upload((name) => ({ last_frame: name }))} onRemove={() => onChange({ last_frame: null })} />
+      <UploadSlot title={t('refImages')} files={refImages} multiple removeLabel={t('remove')} disabled={uploading}
+        onAdd={upload((name) => ({ ref_images: [...refImages, name] }))}
+        onRemove={(n) => onChange({ ref_images: refImages.filter((x) => x !== n) })} />
+      <AudioSlot title={t('refAudio')} files={refAudio} removeLabel={t('remove')} disabled={uploading}
+        onAdd={upload((name) => ({ ref_audio: [...refAudio, name] }))}
+        onRemove={(n) => onChange({ ref_audio: refAudio.filter((x) => x !== n) })} />
 
       <div className="p-2 mt-auto">
-        <Button onClick={onGenerate} disabled={generating || busy || !shot.prompt.trim()}
+        <Button onClick={onGenerate} disabled={generating || busy || uploading || conditioning.errors.length > 0 || !shot.prompt.trim()}
           className="w-full h-10 rounded-none bg-white text-black hover:bg-white/85 text-[12px] font-semibold uppercase tracking-[0.2em]">
           {busy ? t('running') : shot.output ? t('regenerateShot') : t('generateShot')}
         </Button>

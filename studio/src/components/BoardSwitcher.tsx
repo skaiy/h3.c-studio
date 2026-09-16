@@ -15,15 +15,18 @@ interface Props {
   boards: BoardSummary[]
   currentId: string | null
   onRefresh: () => void
+  beforeMutate?: (id: string) => Promise<void>
 }
 
-export default function BoardSwitcher({ boards, currentId, onRefresh }: Props) {
+export default function BoardSwitcher({ boards, currentId, onRefresh, beforeMutate }: Props) {
   const { t } = useI18n()
   const nav = useNavigate()
   const [open, setOpen] = useState(false)
   const [renaming, setRenaming] = useState<string | null>(null)
   const [renameVal, setRenameVal] = useState('')
   const [confirmDel, setConfirmDel] = useState<string | null>(null)
+  const [error, setError] = useState('')
+  const mutating = useRef(false)
   const ref = useRef<HTMLDivElement>(null)
   const current = boards.find((b) => b.id === currentId)
 
@@ -34,6 +37,15 @@ export default function BoardSwitcher({ boards, currentId, onRefresh }: Props) {
     document.addEventListener('mousedown', close)
     return () => document.removeEventListener('mousedown', close)
   }, [])
+
+  const attempt = async (action: () => Promise<void>) => {
+    if (mutating.current) return
+    mutating.current = true
+    setError('')
+    try { await action() }
+    catch (error) { setError(error instanceof Error ? error.message : t('operationFailed')) }
+    finally { mutating.current = false }
+  }
 
   const createBoard = async () => {
     const b = await api.saveBoard({
@@ -49,12 +61,14 @@ export default function BoardSwitcher({ boards, currentId, onRefresh }: Props) {
     const name = renameVal.trim()
     setRenaming(null)
     if (!name || name === b.name) return
+    await beforeMutate?.(b.id)
     const full = await api.board(b.id)
     await api.saveBoard({ ...full, name })
     onRefresh()
   }
 
   const duplicate = async (b: BoardSummary) => {
+    await beforeMutate?.(b.id)
     const copy = await api.duplicateBoard(b.id)
     setOpen(false)
     onRefresh()
@@ -68,12 +82,13 @@ export default function BoardSwitcher({ boards, currentId, onRefresh }: Props) {
       return
     }
     setConfirmDel(null)
+    await beforeMutate?.(b.id)
     await api.deleteBoard(b.id)
     onRefresh()
     if (b.id === currentId) {
       const rest = (await api.boards().catch(() => [] as BoardSummary[])).filter((x) => x.id !== b.id)
       if (rest.length) nav(`/b/${rest[0].id}`)
-      else createBoard()
+      else await createBoard()
       setOpen(false)
     }
   }
@@ -85,6 +100,7 @@ export default function BoardSwitcher({ boards, currentId, onRefresh }: Props) {
       </button>
       {open && (
         <div className="absolute top-full left-0 z-50 w-80 bg-popover border border-border shadow-lg">
+          {error && <p role="alert" className="p-2 text-xs text-red-300">{error}</p>}
           {boards.map((b) => (
             <div key={b.id} className={`group flex items-center border-b border-border/50 ${b.id === currentId ? 'bg-card/40' : ''}`}>
               {renaming === b.id ? (
@@ -92,8 +108,8 @@ export default function BoardSwitcher({ boards, currentId, onRefresh }: Props) {
                   autoFocus
                   value={renameVal}
                   onChange={(e) => setRenameVal(e.target.value)}
-                  onBlur={() => commitRename(b)}
-                  onKeyDown={(e) => e.key === 'Enter' && commitRename(b)}
+                  onBlur={() => attempt(() => commitRename(b))}
+                  onKeyDown={(e) => e.key === 'Enter' && attempt(() => commitRename(b))}
                   className="flex-1 m-1 h-7 bg-black/40 border border-white px-1 text-[12px] outline-none"
                 />
               ) : (
@@ -112,17 +128,17 @@ export default function BoardSwitcher({ boards, currentId, onRefresh }: Props) {
                   onClick={() => { setRenaming(b.id); setRenameVal(b.name) }}
                   className="w-6 h-6 text-[11px] text-muted-foreground hover:text-white border border-border hover:border-white">✎</button>
                 <button title={t('duplicateBoard')}
-                  onClick={() => duplicate(b)}
+                  onClick={() => attempt(() => duplicate(b))}
                   className="w-6 h-6 text-[11px] text-muted-foreground hover:text-white border border-border hover:border-white">⧉</button>
                 <button title={t('delete')}
-                  onClick={() => remove(b)}
+                  onClick={() => attempt(() => remove(b))}
                   className={`h-6 text-[10px] border ${confirmDel === b.id ? 'text-white bg-black border-white px-1' : 'w-6 text-muted-foreground hover:text-white border-border hover:border-white'}`}>
                   {confirmDel === b.id ? t('confirmDelete') : '✕'}
                 </button>
               </div>
             </div>
           ))}
-          <button onClick={createBoard}
+          <button onClick={() => attempt(createBoard)}
             className="w-full text-left px-2 py-1.5 text-[12px] text-muted-foreground hover:text-white hover:bg-card/60">
             {t('newBoard')}
           </button>

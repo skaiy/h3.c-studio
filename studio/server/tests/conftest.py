@@ -66,12 +66,15 @@ class FakeProc:
             return self.returncode
         return None
 
-    def wait(self):
+    def wait(self, timeout=None):
         return self.returncode
 
     def terminate(self):
         self.terminated = True
         self.returncode = -15
+
+    def kill(self):
+        self.terminate()
 
 
 def make_fake_popen(output_lines, returncode=0, capture=None):

@@ -17,6 +17,21 @@ export interface GenParams {
   checkpoint_after_step: number | null
   resume: string | null
   label: string | null
+  board_id?: string | null
+  shot_id?: string | null
+}
+
+export interface GenerateResult {
+  job_id: string
+  warnings?: string[]
+}
+
+export interface PromptFields {
+  scene: string
+  action: string
+  camera: string
+  look: string
+  audio: string
 }
 
 export interface Job {
@@ -53,12 +68,55 @@ export function setAuthToken(token: string) {
   else localStorage.removeItem(TOKEN_STORAGE_KEY)
 }
 
+export class ApiError extends Error {
+  readonly status: number
+
+  constructor(status: number, message: string) {
+    super(`${status} ${message}`)
+    this.name = 'ApiError'
+    this.status = status
+  }
+}
+
+// Only read message fields, never serialize validation input, context, headers or logs.
+function errorDetail(value: unknown, depth = 0): string {
+  if (depth > 3) return ''
+  if (typeof value === 'string') return value
+  if (Array.isArray(value)) return value.slice(0, 3).map((v) => errorDetail(v, depth + 1)).filter(Boolean).join('; ')
+  if (value && typeof value === 'object') {
+    for (const key of ['detail', 'message', 'msg', 'error'] as const) {
+      if (key in value) {
+        const detail = errorDetail(Reflect.get(value, key), depth + 1)
+        if (detail) return detail
+      }
+    }
+  }
+  return ''
+}
+
+function safeErrorDetail(value: unknown, token: string): string {
+  let message = errorDetail(value)
+  if (token) message = message.replaceAll(token, '[redacted]')
+  // Proxy HTML / tracebacks are not user-facing API messages.
+  if (/<\/?[a-z][^>]*>/i.test(message) || /traceback \(most recent call last\)/i.test(message)) return ''
+  return message
+    .replace(/-----BEGIN [\s\S]*?-----END [^-]+-----/g, '[redacted]')
+    .replace(/\b(?:Bearer|Basic)\s+[^\s,;]+/gi, '[redacted]')
+    .replace(/\b(?:authorization|cookie|set-cookie)\s*[:=][^\r\n]*/gi, '[redacted]')
+    .replace(/\b(?:[\w-]*(?:token|password|secret)|api[_-]?key)\b["']?\s*[:=]\s*(?:"[^"]*"|'[^']*'|[^\s,;]+)/gi, '[redacted]')
+    .replace(/https?:\/\/\S+/gi, '[URL]')
+    .replace(/\s+/g, ' ').trim().slice(0, 300)
+}
+
 async function req<T>(url: string, init?: RequestInit): Promise<T> {
   const token = getAuthToken()
   const headers = new Headers(init?.headers)
   if (token) headers.set('Authorization', `Bearer ${token}`)
   const r = await fetch(url, { ...init, headers })
-  if (!r.ok) throw new Error(`${r.status} ${await r.text()}`)
+  if (!r.ok) {
+    const payload: unknown = await r.json().catch(() => null)
+    throw new ApiError(r.status, safeErrorDetail(payload, token) || 'Request failed')
+  }
   return r.json()
 }
 
@@ -67,7 +125,7 @@ export interface Shot {
   prompt: string
   width: number
   height: number
-  seconds: number
+  seconds: number | null
   steps: number
   layers: number
   reuse: number
@@ -75,6 +133,13 @@ export interface Shot {
   turbo?: boolean
   first_frame: string | null
   last_frame: string | null
+  ref_images?: string[]
+  ref_audio?: string[]
+  frames?: number | null
+  token_reduction?: boolean
+  checkpoint_after_step?: number | null
+  prompt_mode?: 'simple' | 'structured'
+  prompt_fields?: PromptFields | null
   status: string
   output: string | null
   job_id: string | null
@@ -107,14 +172,18 @@ export const api = {
   info: () => req<{ info: string }>('/api/info'),
   videos: () => req<VideoItem[]>('/api/videos'),
   jobs: () => req<Job[]>('/api/jobs'),
-  job: (id: string) => req<Job>(`/api/jobs/${id}`),
+  job: (id: string) => req<Job>(`/api/jobs/${encodeURIComponent(id)}`),
   generate: (params: GenParams) =>
-    req<{ job_id: string }>('/api/generate', {
+    req<GenerateResult>('/api/generate', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(params),
     }),
-  cancel: (id: string) => req(`/api/jobs/${id}`, { method: 'DELETE' }),
+  generateShot: (boardId: string, shotId: string) =>
+    req<GenerateResult>(`/api/boards/${encodeURIComponent(boardId)}/shots/${encodeURIComponent(shotId)}/generate`, { method: 'POST' }),
+  resumeJob: (jobId: string) =>
+    req<GenerateResult>(`/api/jobs/${encodeURIComponent(jobId)}/resume`, { method: 'POST' }),
+  cancel: (id: string) => req(`/api/jobs/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   uploads: () => req<string[]>('/api/uploads'),
   upload: async (file: File) => {
     const fd = new FormData()
@@ -124,17 +193,17 @@ export const api = {
   extractLastFrame: (name: string) =>
     req<{ name: string }>(`/api/extract-last-frame/${encodeURIComponent(name)}`, { method: 'POST' }),
   boards: () => req<BoardSummary[]>('/api/boards'),
-  board: (id: string) => req<Board>(`/api/boards/${id}`),
+  board: (id: string) => req<Board>(`/api/boards/${encodeURIComponent(id)}`),
   saveBoard: (b: Board) =>
     req<Board>('/api/boards', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(b),
     }),
-  deleteBoard: (id: string) => req(`/api/boards/${id}`, { method: 'DELETE' }),
+  deleteBoard: (id: string) => req(`/api/boards/${encodeURIComponent(id)}`, { method: 'DELETE' }),
   duplicateBoard: (id: string) =>
-    req<Board>(`/api/boards/${id}/duplicate`, { method: 'POST' }),
-  runBoard: (id: string) => req(`/api/boards/${id}/run`, { method: 'POST' }),
+    req<Board>(`/api/boards/${encodeURIComponent(id)}/duplicate`, { method: 'POST' }),
+  runBoard: (id: string) => req(`/api/boards/${encodeURIComponent(id)}/run`, { method: 'POST' }),
   concatBoard: (id: string) =>
-    req<{ output: string }>(`/api/boards/${id}/concat`, { method: 'POST' }),
+    req<{ output: string }>(`/api/boards/${encodeURIComponent(id)}/concat`, { method: 'POST' }),
 }

@@ -101,4 +101,36 @@ describe('ShotRail', () => {
     setup([shot('a', { status: 'done', output: 'a.mp4' })], { sequencing: true })
     expect(screen.getByText(/停止预览/)).toBeInTheDocument()
   })
+
+  it('blocks every mutation while disabled, including synthetic drag/drop and insert gaps, but permits selection and preview', () => {
+    const props = {
+      board: board([shot('a', { status: 'done', output: 'a.mp4' }), shot('b', { status: 'done', output: 'b.mp4' })]),
+      disabled: true, selected: 0,
+      onSelect: vi.fn(), onAddShot: vi.fn(), onInsertShot: vi.fn(),
+      onDuplicateShot: vi.fn(), onDeleteShot: vi.fn(), onReorder: vi.fn(),
+      onRunAll: vi.fn(), onConcat: vi.fn(), sequencing: false, onToggleSequence: vi.fn(),
+    }
+    render(<ShotRail {...props} />)
+    const first = screen.getByTestId('shot-card-0'), second = screen.getByTestId('shot-card-1')
+    expect(first).toHaveAttribute('draggable', 'false')
+    for (const button of [
+      screen.getByText('+ 添加'), screen.getByText(/运行全部/), screen.getByText(/拼接导出/),
+      ...screen.getAllByTestId('shot-duplicate'), ...screen.getAllByTestId('shot-delete'),
+    ]) {
+      expect(button).toBeDisabled()
+      fireEvent.click(button)
+      fireEvent.click(button)
+    }
+    for (const index of [0, 1, 2]) fireEvent.click(screen.getByTestId(`insert-${index}`))
+    fireEvent.dragStart(first)
+    fireEvent.dragOver(second)
+    fireEvent.drop(second)
+    for (const callback of [props.onAddShot, props.onInsertShot, props.onDuplicateShot, props.onDeleteShot, props.onReorder, props.onRunAll, props.onConcat]) {
+      expect(callback).not.toHaveBeenCalled()
+    }
+    fireEvent.click(second)
+    expect(props.onSelect).toHaveBeenCalledWith(1)
+    fireEvent.click(screen.getByText(/连续预览/))
+    expect(props.onToggleSequence).toHaveBeenCalledOnce()
+  })
 })
