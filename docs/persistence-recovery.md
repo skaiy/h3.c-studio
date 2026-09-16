@@ -63,6 +63,7 @@ edits, rollback for ordinary disk-full save failures, or recovery of data alread
 No GPU execution, personal-media manipulation or destructive recovery is required.
 Tests use isolated synthetic files and assert original bytes survive rejected writes.
 
-#14/#16 remain separate PRs. After integrating those branches, re-run the combined
-test suite (including reference snapshots) and retain this fail-closed loader when
-resolving any overlap; do not reintroduce the old silent-empty fallback.
+#16 is now on main and integrated here, including its reference schemas and frozen
+shot/take snapshots. Combined reference-set/recovery tests validate normal restart,
+malformed nested metadata and blocked reference mutations. #14's take UI remains
+separate; retain the fail-closed loader and rerun combined tests on future updates.

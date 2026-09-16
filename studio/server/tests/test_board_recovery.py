@@ -209,7 +209,7 @@ def test_history_identity_and_selection_are_validated(app_env, originals, case):
 
 @pytest.mark.parametrize("level,field", [
     ("board", "future_metadata"), ("shot", "future_metadata"),
-    ("take", "future_metadata"), ("take", "reference_snapshot"),
+    ("take", "future_metadata"),
     ("prompt_fields", "future_metadata"),
 ])
 def test_unknown_nested_metadata_is_a_forward_version_guard(app_env, originals, level, field):
@@ -219,7 +219,7 @@ def test_unknown_nested_metadata_is_a_forward_version_guard(app_env, originals, 
     shot["prompt_fields"] = {}
     target = {"board": board, "shot": shot, "take": shot["takes"][0],
               "prompt_fields": shot["prompt_fields"]}[level]
-    # No #16 schema import: this backend must refuse metadata it cannot preserve.
+    # Even with #16 integrated, unknown future fields must not be discarded.
     target[field] = {"version": 999, "nested": {"items": [{"original": ORIGINAL_MARKER}]}}
     app_env.BOARDS_FILE.write_text(json.dumps(data), encoding="utf-8")
     restart_rejected(app_env, originals, "invalid_schema")
@@ -333,6 +333,12 @@ WRITE_ROUTES = [
     ("DELETE", "/api/videos/keep.mp4"), ("DELETE", "/api/jobs/persisted"),
     ("POST", "/api/jobs/persisted/resume"),
     ("POST", "/api/extract-last-frame/keep.mp4"),
+    ("POST", "/api/boards/board/assets"),
+    ("DELETE", "/api/boards/board/assets/image"),
+    ("POST", "/api/boards/board/reference-sets"),
+    ("PUT", "/api/boards/board/reference-sets/refs"),
+    ("DELETE", "/api/boards/board/reference-sets/refs"),
+    ("POST", "/api/boards/board/shots/s1/reference-sets/refs/apply"),
     *[(method, "/api/future/unknown") for method in ("POST", "PUT", "PATCH", "DELETE")],
 ]
 
@@ -477,4 +483,90 @@ def test_authentication_precedes_recovery_without_exposing_credentials(app_env, 
         assert response.status_code == 200
     logged = any(value in caplog.text for value in (credential, wrong_credential))
     assert not logged, "logs exposed an authentication credential"
+    assert disk_state(originals) == before
+
+
+def reference_collection(app_env):
+    data = collection()
+    image = app_env.ReferenceAsset(id="image", filename="keep.png", kind="image",
+                                   size=24, sha256="a" * 64, created_at=1.0,
+                                   width=2, height=3).model_dump()
+    audio = app_env.ReferenceAsset(id="audio", filename="missing.wav", kind="audio",
+                                   size=32, sha256="b" * 64, created_at=1.0,
+                                   duration=3.0).model_dump()
+    group = app_env.ReferenceSet(id="refs", name="Frozen references", kind="character",
+                                 image_asset_ids=[image["id"]], audio_asset_ids=[audio["id"]],
+                                 revision=2).model_dump()
+    snapshot = app_env.ReferenceSnapshot(source_board_id="board", set_id="refs",
+                                         set_revision=1, set_name="Original references",
+                                         images=[image], audio=[audio]).model_dump()
+    board = data["board"]
+    board.update(assets=[image, audio], reference_sets=[group])
+    shot = board["shots"][0]
+    shot.update(reference_snapshot=deepcopy(snapshot), ref_images=[image["filename"]],
+                ref_audio=[audio["filename"]])
+    shot["takes"][0]["reference_snapshot"] = deepcopy(snapshot)
+    shot["takes"][0]["request"].update(ref_images=shot["ref_images"], ref_audio=shot["ref_audio"])
+    return data
+
+
+def test_reference_metadata_and_frozen_history_survive_restart_and_save(app_env, originals):
+    data = reference_collection(app_env)
+    app_env.BOARDS_FILE.write_text(json.dumps(data), encoding="utf-8")
+    before = disk_state(originals)
+    restarted = restart_backend()
+    assert restarted.BOARDS_LOAD_ERROR is None
+    with TestClient(restarted.app) as client:
+        response = client.get("/api/boards/board")
+        assert response.status_code == 200
+        board = response.json()
+        shot = board["shots"][0]
+        frozen = data["board"]["shots"][0]["reference_snapshot"]
+        assert shot["reference_snapshot"] == shot["takes"][0]["reference_snapshot"] == frozen
+        assert board["reference_sets"][0]["revision"] == 2 and frozen["set_revision"] == 1
+        assert shot["reference_snapshot_missing"]  # Missing bytes are not corrupt metadata.
+        assert board["assets"][1]["missing"] and not board["assets"][0]["missing"]
+        assert disk_state(originals) == before
+        board["shots"][0]["prompt"] = "Only a draft edit"
+        saved = client.post("/api/boards", json=board)
+        assert saved.status_code == 200
+    persisted = json.loads(restarted.BOARDS_FILE.read_text())["board"]
+    assert persisted["assets"] == data["board"]["assets"]
+    assert persisted["reference_sets"] == data["board"]["reference_sets"]
+    assert persisted["shots"][0]["reference_snapshot"] == frozen
+    assert persisted["shots"][0]["takes"][0]["reference_snapshot"] == frozen
+
+
+@pytest.mark.parametrize("location", ["shot", "take"])
+@pytest.mark.parametrize("damage", ["shape", "images", "audio", "asset_type"])
+def test_malformed_frozen_snapshot_blocks_without_overwriting(app_env, originals, location, damage):
+    data = reference_collection(app_env)
+    shot = data["board"]["shots"][0]
+    target = shot if location == "shot" else shot["takes"][0]
+    snapshot = target["reference_snapshot"]
+    if damage == "shape":
+        target["reference_snapshot"] = []
+    elif damage in ("images", "audio"):
+        snapshot[damage] = "not-an-array"
+    else:
+        snapshot["images"][0]["size"] = "not-an-integer"
+    app_env.BOARDS_FILE.write_text(json.dumps(data), encoding="utf-8")
+    restart_rejected(app_env, originals, "invalid_schema")
+
+
+@pytest.mark.parametrize("location,field", [("assets", "size"), ("reference_sets", "image_asset_ids")])
+def test_malformed_reference_library_blocks_without_overwriting(app_env, originals, location, field):
+    data = reference_collection(app_env)
+    data["board"][location][0][field] = {"invalid": True}
+    app_env.BOARDS_FILE.write_text(json.dumps(data), encoding="utf-8")
+    restart_rejected(app_env, originals, "invalid_schema")
+
+
+def test_reference_commit_cannot_bypass_recovery_guard(recovery, originals):
+    before = disk_state(originals)
+    board = {"id": "board", "modifiedAt": 1.0}
+    with recovery.lock, pytest.raises(HTTPException) as caught:
+        recovery.commit_reference_board(board, {**board, "assets": []})
+    assert caught.value.status_code == 503
+    assert recovery.boards == {}
     assert disk_state(originals) == before
