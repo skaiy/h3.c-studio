@@ -15,6 +15,9 @@ export const VALID_LANGS: Lang[] = LANGS.map((l) => l.code)
 
 // zh is the canonical, always-complete dictionary that the `Dict` type is derived from.
 export const zh = {
+  boardLoadFailed: '无法打开分镜板',
+  boardLoadHint: '请检查后端连接并遵循上方的恢复说明。如遇访问错误，请在设置中更新访问令牌，然后重试。下方重试按钮会保留本页修改；刷新或关闭浏览器页面可能丢失未保存的修改。',
+  retryLoad: '重试加载',
   saveFailed: '保存失败，修改仍保留在当前页面',
   retrySave: '重试保存',
   reloadBoard: '放弃本地修改并重新加载',

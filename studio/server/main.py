@@ -2,6 +2,7 @@
 """H3 Studio backend — wraps the h3-metal CLI with a job queue and progress API."""
 import hashlib
 import json
+import logging
 import math
 import os
 import re
@@ -18,6 +19,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
+from board_storage import BoardStorageError, read_board_object
 
 ROOT = Path(__file__).resolve().parent.parent          # studio/
 # Engine directory: repo root by default (fork layout), overridable via env.
@@ -52,6 +54,13 @@ async def require_token_for_writes(request: Request, call_next):
         auth = request.headers.get("authorization", "")
         if auth != f"Bearer {STUDIO_TOKEN}":
             return JSONResponse({"detail": "missing or invalid bearer token"}, status_code=401)
+    path = request.url.path
+    board_read = path == "/api/boards" or path.startswith("/api/boards/")
+    api_write = path.startswith("/api/") and request.method not in ("GET", "HEAD", "OPTIONS")
+    if BOARDS_LOAD_ERROR and request.method != "OPTIONS" and (board_read or api_write):
+        return JSONResponse({"detail": BOARD_STORAGE_DETAIL,
+                             "code": "board_persistence_unavailable",
+                             "reason": BOARDS_LOAD_ERROR}, status_code=503)
     return await call_next(request)
 
 
@@ -116,6 +125,8 @@ def save_jobs():
 
 
 def atomic_json(path: Path, value: dict):
+    if path == BOARDS_FILE:
+        require_board_storage()
     temporary = path.with_name(path.name + ".tmp")
     temporary.write_text(json.dumps(value, ensure_ascii=False, indent=1))
     temporary.replace(path)
@@ -419,6 +430,16 @@ def launch_next():
 
 BOARDS_FILE = Path(os.environ.get("H3_BOARDS_FILE", ROOT / "storyboards.json"))
 boards: dict[str, dict] = {}
+BOARDS_LOAD_ERROR: str | None = None  # Latched until a backend restart, never a UI retry.
+BOARD_STORAGE_DETAIL = (
+    "Storyboard persistence is unavailable; all writes are blocked. Stop the backend, "
+    "back up the original file, restore a known-good copy, then restart."
+)
+
+
+def require_board_storage():
+    if BOARDS_LOAD_ERROR:
+        raise HTTPException(503, BOARD_STORAGE_DETAIL)
 
 
 def save_boards():
@@ -540,12 +561,50 @@ def selected_take_sequence(board: dict) -> list[tuple[str, str]]:
             if selected_take(shot) is not None]
 
 
+def validate_stored_board(key: str, board: dict):
+    """Validate structure, not generation feasibility or media availability."""
+    Board.model_validate(board, strict=True)
+    if not key or board["id"] != key:
+        raise ValueError("invalid board identity")
+    # Refuse unknown future metadata instead of silently dropping it on save.
+    if board.keys() - Board.model_fields.keys() - {"_run_id", "error"}:
+        raise ValueError("unknown board fields")
+    if any(not isinstance(board[field], str) for field in ("_run_id", "error") if field in board):
+        raise ValueError("invalid runtime metadata")
+    shot_ids, take_ids = set(), set()
+    for shot in board["shots"]:
+        if not shot["id"] or shot["id"] in shot_ids:
+            raise ValueError("invalid shot identity")
+        shot_ids.add(shot["id"])
+        if shot.keys() - Shot.model_fields.keys() - {"_instance_id"}:
+            raise ValueError("unknown shot fields")
+        if (shot["prompt_fields"] is not None
+                and shot["prompt_fields"].keys() - PromptFields.model_fields.keys()):
+            raise ValueError("unknown prompt fields")
+        if "_instance_id" in shot and (
+                not isinstance(shot["_instance_id"], str) or not shot["_instance_id"]):
+            raise ValueError("invalid shot instance")
+        local_takes = set()
+        for take in shot["takes"]:
+            if not take["id"] or take["id"] in take_ids or take["shot_id"] != shot["id"]:
+                raise ValueError("invalid take identity")
+            if take.keys() - Take.model_fields.keys():
+                raise ValueError("unknown take fields")
+            if take["request"] is not None:
+                GenRequest.model_validate(take["request"], strict=True)
+            take_ids.add(take["id"])
+            local_takes.add(take["id"])
+        if shot["selected_take_id"] is not None and shot["selected_take_id"] not in local_takes:
+            raise ValueError("invalid selected take")
+
+
 def load_boards() -> dict[str, dict]:
-    if not BOARDS_FILE.exists():
+    global BOARDS_LOAD_ERROR
+    if BOARDS_LOAD_ERROR:
         return {}
     try:
-        restored = json.loads(BOARDS_FILE.read_text())
-        for board in restored.values():
+        restored = read_board_object(BOARDS_FILE)
+        for board_id, board in restored.items():
             defaults = Board(id=board["id"]).model_dump()
             for key, value in defaults.items():
                 board.setdefault(key, value)
@@ -555,6 +614,8 @@ def load_boards() -> dict[str, dict]:
                     shot.setdefault(key, value)
                 if shot["prompt_fields"] is not None:
                     shot["prompt_fields"] = {**PromptFields().model_dump(), **shot["prompt_fields"]}
+            validate_stored_board(board_id, board)
+            for shot in board["shots"]:
                 shot.setdefault("_instance_id", uuid.uuid4().hex)
                 normalize_shot_history(board, shot)
                 if shot["status"] in ACTIVE:
@@ -563,7 +624,11 @@ def load_boards() -> dict[str, dict]:
                 board["status"] = "interrupted"
             board.pop("_run_id", None)
         return restored
-    except (OSError, ValueError, KeyError, TypeError):
+    except (OSError, ValueError, KeyError, TypeError, AttributeError, RecursionError) as exc:
+        BOARDS_LOAD_ERROR = exc.reason if isinstance(exc, BoardStorageError) else "invalid_schema"
+        logging.getLogger(__name__).error(
+            "Storyboard persistence unavailable (%s); writes blocked. Preserve the original file before recovery.",
+            BOARDS_LOAD_ERROR)
         return {}
 
 

@@ -4,6 +4,9 @@ export type StudioI18nKey = I18nKey
 type PartialDict = Partial<Record<I18nKey, string>>
 
 const en: PartialDict = {
+  boardLoadFailed: 'Could not open the storyboard',
+  boardLoadHint: 'Check the backend connection and follow any recovery instructions above. For access errors, update the access token in Settings, then retry. The retry button keeps edits in this page; refreshing or closing the browser page may lose unsaved edits.',
+  retryLoad: 'Retry loading',
   saveFailed: 'Save failed; changes remain in this page',
   retrySave: 'Retry save',
   reloadBoard: 'Discard local changes and reload',
@@ -109,6 +112,9 @@ const en: PartialDict = {
 }
 
 const ja: PartialDict = {
+  boardLoadFailed: 'ストーリーボードを開けませんでした',
+  boardLoadHint: 'バックエンドへの接続を確認し、上に復旧手順があれば従ってください。アクセスエラーの場合は設定でアクセストークンを更新してください。下の再試行ボタンでは編集中の変更を保持しますが、ブラウザの更新やページを閉じる操作では未保存の変更が失われる場合があります。',
+  retryLoad: '読み込みを再試行',
   saveFailed: '保存に失敗しました。変更はこのページ内に保持されています',
   retrySave: '保存を再試行',
   reloadBoard: 'ローカルの変更を破棄して再読み込み',
@@ -214,6 +220,9 @@ const ja: PartialDict = {
 }
 
 const ko: PartialDict = {
+  boardLoadFailed: '스토리보드를 열 수 없습니다',
+  boardLoadHint: '백엔드 연결을 확인하고 위에 복구 안내가 있으면 따라 주세요. 접근 오류가 발생하면 설정에서 액세스 토큰을 수정하세요. 아래 재시도 버튼은 현재 편집 내용을 유지하지만, 브라우저 새로고침이나 페이지를 닫으면 저장하지 않은 내용이 사라질 수 있습니다.',
+  retryLoad: '불러오기 다시 시도',
   saveFailed: '저장에 실패했지만 변경 사항은 이 페이지에 유지됩니다',
   retrySave: '저장 다시 시도',
   reloadBoard: '로컬 변경 사항 취소 후 새로고침',
@@ -319,6 +328,9 @@ const ko: PartialDict = {
 }
 
 const de: PartialDict = {
+  boardLoadFailed: 'Storyboard konnte nicht geöffnet werden',
+  boardLoadHint: 'Prüfen Sie die Backend-Verbindung und befolgen Sie etwaige Wiederherstellungshinweise oben. Bei Zugriffsfehlern aktualisieren Sie das Zugriffstoken in den Einstellungen. Die Schaltfläche zum erneuten Laden erhält Änderungen auf dieser Seite; beim Aktualisieren oder Schließen der Browserseite können ungespeicherte Änderungen verloren gehen.',
+  retryLoad: 'Laden erneut versuchen',
   saveFailed: 'Speichern fehlgeschlagen; Änderungen bleiben auf dieser Seite erhalten',
   retrySave: 'Speichern wiederholen',
   reloadBoard: 'Lokale Änderungen verwerfen und neu laden',
