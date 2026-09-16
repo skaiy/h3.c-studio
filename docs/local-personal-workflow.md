@@ -2,15 +2,15 @@
 
 2026-09-15 · 用户已确认方向：本机、个人项目、先可靠生成，再复用与轻量剪辑。
 
-**Status:** #7 is merged. #8 backend PR A is implemented in this branch, pending review/merge; its UI PR B and #9–#11 are not delivered. The contracts below do not imply released UI or verified generation quality. GitHub tracks current merge status.
+**Status:** #7 and #8 backend PR A (#13) are merged; #8 UI PR B (#14) is pending review/merge. #9 backend PR A is implemented independently from main in this branch, pending review/merge. #9 UI and #10–#11 are not delivered. GitHub tracks current merge status; no real GPU validation of Song Storyboard is claimed.
 
 ## 路线图与 PR 依赖 / Roadmap & dependencies
 
 | Issue | 状态 | 范围与 PR 拆分 | 前置依赖 |
 |---|---|---|---|
 | [#7 · P0](https://github.com/skaiy/h3.c-studio/issues/7) | 已合并 | 输入/结构化提示词持久化、单条/批量共用请求构建与预检、按原任务安全续跑 | 当前可靠性基础；不含 take 选择 |
-| [#8 · Local takes](https://github.com/skaiy/h3.c-studio/issues/8) | A 在本分支实现，待评审/合并；B 未开始 | A：后端 take schema、旧数据迁移与选择 API；B：比较/采用 UI、下游连续性警告 | #7 已合并；B 等 A 合并 |
-| [#9 · Local reference sets](https://github.com/skaiy/h3.c-studio/issues/9) | 规划中 | A：本地 assets/参考集 API；B：项目内管理与选择器 UI | #7 合并；B 等 A 合并；与 #8 对齐快照语义 |
+| [#8 · Local takes](https://github.com/skaiy/h3.c-studio/issues/8) | A (#13) 已合并；B (#14) 待评审/合并 | A：后端 take schema、旧数据迁移与选择 API；B：比较/采用 UI、下游连续性警告 | #7、A 已合并；B 直接到 main |
+| [#9 · Local reference sets](https://github.com/skaiy/h3.c-studio/issues/9) | A 本分支实现，待评审/合并；B 尚未开始 | A：本地 assets/参考集 API；B：项目内管理与选择器 UI | #7、#8 A 已合并；不依赖 #14 UI；B 等 A 合并 |
 | [#10 · Lightweight edit/export](https://github.com/skaiy/h3.c-studio/issues/10) | 规划中 | A：edit manifest、后端导出与 fixture 测试；B：最小 trim/配乐 UI | #7、#8 的选定 take 语义合并；B 等 A 合并 |
 | [#11 · Song Storyboard](https://github.com/skaiy/h3.c-studio/issues/11) | 规划中，仅可行性实验 | 小型离线切段/对齐原型，记录实验结果后再决定产品 UI | 先 #7；产品化前需 #9 参考集与 #10 基础导出契约 |
 
@@ -53,6 +53,7 @@
 - 应用参考集时复制明确的素材引用快照并记录来源集 ID/revision，**不是 live alias**。编辑参考集不能改变已应用镜头、排队请求或历史 take；更新需显式重新应用。
 - 历史请求保留稳定素材引用；替换素材应产生新身份，不能用同一别名悄悄指向新文件。缺失媒体提供 repair/relink 状态，不自动删除仍被引用的文件。
 - 应用前展示 Ref2VA/FL2VA 冲突；不静默清空用户原条件输入，不上传外部服务。
+- A 的具体接口与复制/修复边界见 [reference-sets-api.md](reference-sets-api.md)：以 board 为项目，登记时独立复制并校验内容指纹，应用固定来源版本；缺失时恢复原件或登记新身份再显式重新应用，绝不原地改写历史。软末帧接力仍只属 #11 实验规划。
 
 ### #10：edit manifest 与固定 take 的导出
 
@@ -81,10 +82,14 @@
 
 ## #11：有界 Song Storyboard 实验
 
-1. 使用用户拥有/获授权的 30–45 秒音频，手工或固定时长切成符合引擎约束的片段；先做离线切段/对齐原型。
-2. 获得真实 GPU 实验许可后，仅生成 3–4 段：相同有序参考图、不同音频片段；保留每段原请求、时间范围与 seed，不混用 Ref2VA 与 FL2VA 锚点。
-3. 只重试失败/未接受片段，比较身份一致性、口型、接缝和累计音画漂移；分别评估整首原轨作为 master audio 与生成片段音频。原轨回贴不保证口型同步。
-4. 记录 wall time、可取得的峰值内存、accepted-take ratio、重编码要求和失败案例，再作产品化决定；若身份/时序不达标，报告边界，不宣称无缝超过 15 秒生成。
+2026-09-16 经用户同意吸收 [Henninges 的建议](https://github.com/antirez/h3.c/issues/65#issuecomment-5681191815)，作为后续实验，不打乱 #8 → #9 → #10 主线。对方报告的单条 10 秒 take 稳定性不是跨段验证；本项目自动化测试也不是音频提示词/token reduction 的真实 GPU 实测。
+
+1. **离线先行**：使用用户拥有/获授权的 30–45 秒音频，先手工指定乐句/停顿边界。当前每条参考音频 2–15 秒、每次请求参考音频合计不超过 15 秒；短尾段和超长乐句显式处理，不静默丢弃。保存原曲采样级起止、切片身份、输出帧数/实际时长，测试边界取整与累计漂移。
+2. **获准后做小型 A/B**：起步三个片段，A 组固定有序角色参考集＋各段音频；B 组在相同基础上追加经确认的上一段末帧作为 `--ref-image`，绝不作为 `--first-frame`。预先约定生成/重试预算，固定模型与其他设置；这是软视觉引导，不保证匹配起始像素或平滑接缝。
+3. **软接力安全**：为额外参考图预留容量，不静默替换角色参考。记录派生帧的 asset、source take、帧/时间与用途；上游采用变更只标记下游过期。当前硬首帧 `source_take_id` 逻辑不足以覆盖此依赖，自动软接力须先补契约。背身/变形末帧可能传播错误，保留失败样本，不只选好结果。
+4. **分别评估**：段内与跨段身份、姿态偏移、口型、视觉接缝及音画累计漂移。比较生成分段音频与完整原曲 master；不默认交叉淡化，但必要修复需记录，回贴原轨不保证口型同步。唱/说措辞、非英语语音、token reduction/audio 另做控制变量实验，不从个例推出通用保证或硬性禁用。
+5. **导出边界**：限时 ffprobe 检查 streams、编码、time base、采样率和声道；只对兼容完整片段 stream-copy。任意裁切、crossfade、混音可能重编码；`-c copy` 不修复视觉/口型接缝，也不能一概保证任意帧精确剪切。
+6. **结论再产品化**：报告 wall time、可取得的峰值内存、accepted-take ratio、测得漂移、重编码路径及失败案例。身份/时序不达标就报告边界，不宣称无缝超过 15 秒生成。对方若建立音乐视频跟踪 issue，在 #11 链接协作；不替对方承诺交付，不把未执行实验写成已通过。
 
 ## 官方学习材料 / Learning sources
 
