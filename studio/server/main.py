@@ -18,6 +18,10 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field
+from reference_assets import (
+    ReferenceAsset, ReferenceSet, ReferenceSnapshot,
+    asset_missing, import_asset, validate_asset,
+)
 
 ROOT = Path(__file__).resolve().parent.parent          # studio/
 # Engine directory: repo root by default (fork layout), overridable via env.
@@ -330,6 +334,7 @@ def run_job(job_id: str):
                 return
             assert_job_target(job)
         req = job["request"]
+        validate_reference_snapshot(job.get("reference_snapshot"), req)
         preflight(req)  # queued files may have disappeared since submission
         if job.get("chain_source"):
             req = req.model_copy(update={"first_frame": extract_last_frame_of(job["chain_source"])})
@@ -448,6 +453,7 @@ class Take(BaseModel):
     source_unknown: bool = False
     legacy: bool = False
     model_name: str | None = None
+    reference_snapshot: ReferenceSnapshot | None = None
 
 
 class Shot(BaseModel):
@@ -475,6 +481,7 @@ class Shot(BaseModel):
     job_id: str | None = None
     takes: list[Take] = Field(default_factory=list)
     selected_take_id: str | None = None
+    reference_snapshot: ReferenceSnapshot | None = None
 
 
 class Board(BaseModel):
@@ -486,6 +493,8 @@ class Board(BaseModel):
     result: str | None = None     # concatenated output name
     createdAt: float = 0.0
     modifiedAt: float = 0.0
+    assets: list[ReferenceAsset] = Field(default_factory=list)
+    reference_sets: list[ReferenceSet] = Field(default_factory=list)
 
 
 def managed_output_name(name: str | None) -> bool:
@@ -564,6 +573,9 @@ def load_boards() -> dict[str, dict]:
             board.pop("_run_id", None)
         return restored
     except (OSError, ValueError, KeyError, TypeError):
+        # Existing all-or-nothing recovery also covers nested take snapshots.
+        # Follow-up #15: quarantine corrupt records and fail writes closed, rather
+        # than allowing a later save to replace an unreadable board collection.
         return {}
 
 
@@ -598,9 +610,16 @@ def public_board(board: dict) -> dict:
         state = continuity(take, set()) if take else "none"
         item.update(continuity_state=state, stale=state == "stale",
                     output_missing=bool(take and take_missing(take)))
+        snapshot = shot.get("reference_snapshot")
+        item["reference_snapshot_missing"] = bool(snapshot and any(
+            asset_missing(asset, UPLOADS) for asset in snapshot["images"] + snapshot["audio"]))
         public_shots.append(item)
     return {**{k: v for k, v in board.items() if not k.startswith("_")},
-            "shots": public_shots}
+            "shots": public_shots,
+            "assets": [{**asset, "missing": asset_missing(asset, UPLOADS)}
+                       for asset in board.get("assets", [])],
+            "reference_sets": [public_reference_set(board, item)
+                               for item in board.get("reference_sets", [])]}
 
 
 def target_shot(req: GenRequest) -> tuple[dict, dict] | None:
@@ -659,7 +678,8 @@ def writeback_job(job: dict):
                 request=job["request"].model_dump(),
                 source_take_id=job.get("source_take_id"),
                 source_unknown=job.get("source_unknown", False),
-                legacy=False, model_name=Path(job["model_dir"]).name)
+                legacy=False, model_name=Path(job["model_dir"]).name,
+                reference_snapshot=job.get("reference_snapshot"))
             shot["takes"].append(take.model_dump())
         job["take_id"] = take_id
         if shot.get("selected_take_id") == job.get("selection_at_submit"):
@@ -686,21 +706,42 @@ def chain_source(board: dict, req: GenRequest, previous_take: dict | None) -> di
     return None
 
 
+def snapshot_matches(snapshot: dict | None, values: dict) -> bool:
+    return bool(snapshot and
+                [a["filename"] for a in snapshot["images"]] == values.get("ref_images", []) and
+                [a["filename"] for a in snapshot["audio"]] == values.get("ref_audio", []))
+
+
+def validate_reference_snapshot(snapshot: dict | None, req: GenRequest):
+    if snapshot is None:
+        return
+    if not snapshot_matches(snapshot, req.model_dump()):
+        raise HTTPException(409, "reference snapshot does not match request")
+    for asset in snapshot["images"] + snapshot["audio"]:
+        validate_asset(asset, UPLOADS)
+
+
 def enqueue_job(req: GenRequest, *, source: dict | None = None,
                 source_take_id: str | None = None, source_unknown: bool = False,
-                model_dir: str | None = None) -> dict:
+                model_dir: str | None = None, reference_snapshot: dict | None = None) -> dict:
     """Caller holds lock and has checked target ownership/board reservation."""
+    target = target_shot(req)
+    # Provenance comes only from server-owned shot state or the original resume job.
+    if target and not req.resume:
+        candidate = target[1].get("reference_snapshot")
+        reference_snapshot = candidate if snapshot_matches(candidate, req.model_dump()) else None
+    validate_reference_snapshot(reference_snapshot, req)
     warnings = preflight(req)
     if source:
         resolve_file(source["output"], outputs_only=True)
-    target = target_shot(req)
     job_id = uuid.uuid4().hex[:12]
     job = {"id": job_id, "request": req.model_copy(deep=True), "status": "queued",
            "created": time.time(), "log": [f"warning: {w}" for w in warnings],
            "phase": None, "done": 0, "total": 0, "label": req.label or req.prompt[:40],
            "warnings": warnings, "chain_source": source["output"] if source else None,
            "source_take_id": source["id"] if source else source_take_id,
-           "source_unknown": source_unknown}
+           "source_unknown": source_unknown,
+           "reference_snapshot": json.loads(json.dumps(reference_snapshot))}
     if model_dir:
         job["model_dir"] = model_dir
     if target:
@@ -825,6 +866,9 @@ def upsert_board(board: Board):
         board.createdAt = previous["createdAt"] if previous else now
         board.modifiedAt = now
         updated = board.model_dump()
+        # Dedicated reference APIs own metadata; old frontend autosaves may omit it.
+        updated["assets"] = previous.get("assets", []) if previous else []
+        updated["reference_sets"] = previous.get("reference_sets", []) if previous else []
         if previous:
             # Status/output/job ownership belong to the backend, not autosave.
             updated["status"], updated["result"] = previous["status"], previous.get("result")
@@ -837,6 +881,13 @@ def upsert_board(board: Board):
         prior_shots = {s["id"]: s for s in previous["shots"]} if previous else {}
         for shot in updated["shots"]:
             prior = prior_shots.get(shot["id"])
+            candidate = prior.get("reference_snapshot") if prior else None
+            if prior is None and previous:
+                # A duplicated shot may retain a trusted matching input snapshot.
+                candidate = next((s.get("reference_snapshot") for s in previous["shots"]
+                                  if s.get("reference_snapshot") == shot.get("reference_snapshot")
+                                  and snapshot_matches(s.get("reference_snapshot"), shot)), None)
+            shot["reference_snapshot"] = candidate if snapshot_matches(candidate, shot) else None
             shot["_instance_id"] = prior["_instance_id"] if prior else uuid.uuid4().hex
             if prior:
                 for field in ("status", "output", "job_id", "takes", "selected_take_id"):
@@ -858,6 +909,216 @@ def upsert_board(board: Board):
         return public_board(updated)
 
 
+# ---------------------------------------------------------------- project references
+
+class ReferenceRevision(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    expected_board_revision: float = Field(ge=0, allow_inf_nan=False)
+
+
+class AssetImport(ReferenceRevision):
+    filename: str = Field(min_length=1, max_length=255)
+    kind: Literal["image", "audio"]
+
+
+class ReferenceSetWrite(ReferenceRevision):
+    name: str = Field(min_length=1, max_length=160)
+    kind: Literal["character", "scene", "style", "other"] = "character"
+    image_asset_ids: list[str] = Field(min_length=1, max_length=9)
+    audio_asset_ids: list[str] = Field(default_factory=list, max_length=3)
+    notes: str = Field(default="", max_length=4000)
+    expected_set_revision: int | None = Field(default=None, ge=1)
+
+
+class ReferenceApply(ReferenceRevision):
+    expected_set_revision: int = Field(ge=1)
+    replace_existing: bool = False
+
+
+def reference_board(board_id: str, revision: float | None = None) -> dict:
+    board = boards.get(board_id)
+    if board is None:
+        raise HTTPException(404, "board not found")
+    if revision is not None:
+        require_idle(board)
+        if not math.isfinite(revision) or revision != board["modifiedAt"]:
+            raise HTTPException(409, "stale board revision; reload before changing references")
+    return board
+
+
+def reference_item(items: list[dict], item_id: str) -> dict:
+    match = next((item for item in items if item["id"] == item_id), None)
+    if match is None:
+        raise HTTPException(404, "reference item not found in this board")
+    return match
+
+
+def public_reference_set(board: dict, reference_set: dict) -> dict:
+    assets = {a["id"]: a for a in board.get("assets", [])}
+    ids = reference_set["image_asset_ids"] + reference_set["audio_asset_ids"]
+    return {**reference_set, "missing_asset_ids": [
+        asset_id for asset_id in ids if asset_id not in assets or asset_missing(assets[asset_id], UPLOADS)]}
+
+
+def commit_reference_board(board: dict, updated: dict) -> dict:
+    """Caller holds lock. Persist first so a failed save cannot change live state."""
+    updated["modifiedAt"] = max(time.time(), board["modifiedAt"] + 0.000001)
+    try:
+        atomic_json(BOARDS_FILE, {**boards, board["id"]: updated})
+    except OSError as exc:
+        raise HTTPException(500, "cannot persist reference changes") from exc
+    boards[board["id"]] = updated
+    return public_board(updated)
+
+
+def reference_set_assets(board: dict, data: ReferenceSetWrite) -> tuple[list[dict], list[dict]]:
+    if not data.name.strip():
+        raise HTTPException(400, "reference set name is empty")
+    images, audio = [], []
+    for ids, kind, target in ((data.image_asset_ids, "image", images),
+                              (data.audio_asset_ids, "audio", audio)):
+        if len(ids) != len(set(ids)):
+            raise HTTPException(400, "reference asset IDs must be unique within each list")
+        for asset_id in ids:
+            asset = reference_item(board.get("assets", []), asset_id)
+            if asset["kind"] != kind:
+                raise HTTPException(400, "reference asset kind does not match its list")
+            target.append(asset)
+    if any(type(a.get("duration")) not in (int, float)
+           or not 2 <= a["duration"] <= 15 for a in audio):
+        raise HTTPException(400, "reference audio duration metadata is invalid")
+    if sum(a["duration"] for a in audio) > 15:
+        raise HTTPException(400, "reference audio total exceeds 15 seconds")
+    return images, audio
+
+
+@app.get("/api/boards/{board_id}/assets")
+def list_reference_assets(board_id: str):
+    with lock:
+        return public_board(reference_board(board_id))["assets"]
+
+
+@app.post("/api/boards/{board_id}/assets")
+def register_reference_asset(board_id: str, data: AssetImport):
+    with lock:
+        original = reference_board(board_id, data.expected_board_revision)
+        # No arbitrary path reads; registration only copies an already-local upload/output.
+        source = resolve_file(data.filename)
+        if (UPLOADS / data.filename).is_symlink() or (OUTPUTS / data.filename).is_symlink():
+            raise HTTPException(400, "symlink references cannot be registered")
+    asset = import_asset(source, UPLOADS, data.kind).model_dump()
+    with lock:
+        board = reference_board(board_id, data.expected_board_revision)
+        if board is not original:
+            raise HTTPException(409, "board changed during asset import")
+        # A stale revision/save error may leave an unattached managed copy. Never GC
+        # media implicitly; the original and all previously referenced bytes are safe.
+        return commit_reference_board(board, {**board, "assets": [*board.get("assets", []), asset]})
+
+
+def reference_asset_in_use(asset: dict) -> bool:
+    def snapshot_uses(snapshot):
+        return bool(snapshot and any(a["id"] == asset["id"]
+                                     for a in snapshot["images"] + snapshot["audio"]))
+
+    def inputs_use(values):
+        return asset["filename"] in [values.get("first_frame"), values.get("last_frame"),
+                                      *values.get("ref_images", []), *values.get("ref_audio", [])]
+
+    for board in boards.values():
+        if any(asset["id"] in r["image_asset_ids"] + r["audio_asset_ids"]
+               for r in board.get("reference_sets", [])):
+            return True
+        for shot in board["shots"]:
+            if inputs_use(shot) or snapshot_uses(shot.get("reference_snapshot")):
+                return True
+            for take in shot.get("takes", []):
+                if snapshot_uses(take.get("reference_snapshot")) or inputs_use(take.get("request") or {}):
+                    return True
+    return any(snapshot_uses(job.get("reference_snapshot")) or inputs_use(job["request"].model_dump())
+               for job in jobs.values())
+
+
+@app.delete("/api/boards/{board_id}/assets/{asset_id}")
+def delete_reference_asset(board_id: str, asset_id: str, expected_board_revision: float):
+    with lock:
+        board = reference_board(board_id, expected_board_revision)
+        asset = reference_item(board.get("assets", []), asset_id)
+        if reference_asset_in_use(asset):
+            raise HTTPException(409, "asset is referenced by a set, shot, take or job")
+        return commit_reference_board(board, {**board, "assets": [
+            a for a in board["assets"] if a["id"] != asset_id]})
+
+
+@app.get("/api/boards/{board_id}/reference-sets")
+def list_reference_sets(board_id: str):
+    with lock:
+        return public_board(reference_board(board_id))["reference_sets"]
+
+
+@app.post("/api/boards/{board_id}/reference-sets")
+def create_reference_set(board_id: str, data: ReferenceSetWrite):
+    with lock:
+        board = reference_board(board_id, data.expected_board_revision)
+        reference_set_assets(board, data)
+        if data.expected_set_revision is not None:
+            raise HTTPException(400, "new reference sets have no previous revision")
+        reference_set = ReferenceSet(id=uuid.uuid4().hex, **data.model_dump(
+            exclude={"expected_board_revision", "expected_set_revision"})).model_dump()
+        return commit_reference_board(board, {**board, "reference_sets": [
+            *board.get("reference_sets", []), reference_set]})
+
+
+@app.put("/api/boards/{board_id}/reference-sets/{set_id}")
+def update_reference_set(board_id: str, set_id: str, data: ReferenceSetWrite):
+    with lock:
+        board = reference_board(board_id, data.expected_board_revision)
+        previous = reference_item(board.get("reference_sets", []), set_id)
+        if data.expected_set_revision != previous["revision"]:
+            raise HTTPException(409, "stale reference set revision")
+        reference_set_assets(board, data)
+        updated_set = ReferenceSet(id=set_id, revision=previous["revision"] + 1,
+                                   **data.model_dump(exclude={"expected_board_revision", "expected_set_revision"})).model_dump()
+        return commit_reference_board(board, {**board, "reference_sets": [
+            updated_set if item["id"] == set_id else item for item in board["reference_sets"]]})
+
+
+@app.delete("/api/boards/{board_id}/reference-sets/{set_id}")
+def delete_reference_set(board_id: str, set_id: str, expected_board_revision: float):
+    with lock:
+        board = reference_board(board_id, expected_board_revision)
+        reference_item(board.get("reference_sets", []), set_id)
+        # Applied shots/jobs/takes embed the full snapshot, not a live alias.
+        return commit_reference_board(board, {**board, "reference_sets": [
+            item for item in board["reference_sets"] if item["id"] != set_id]})
+
+
+@app.post("/api/boards/{board_id}/shots/{shot_id}/reference-sets/{set_id}/apply")
+def apply_reference_set(board_id: str, shot_id: str, set_id: str, data: ReferenceApply):
+    with lock:
+        board = reference_board(board_id, data.expected_board_revision)
+        _, shot = target_shot(GenRequest(prompt="", board_id=board_id, shot_id=shot_id))
+        reference_set = reference_item(board.get("reference_sets", []), set_id)
+        if reference_set["revision"] != data.expected_set_revision:
+            raise HTTPException(409, "stale reference set revision")
+        if shot.get("first_frame") is not None or shot.get("last_frame") is not None:
+            raise HTTPException(409, "clear frame anchors explicitly before applying references")
+        contents = ReferenceSetWrite(expected_board_revision=data.expected_board_revision,
+                                     **{k: v for k, v in reference_set.items() if k not in ("id", "revision")})
+        images, audio = reference_set_assets(board, contents)
+        snapshot = ReferenceSnapshot(source_board_id=board_id, set_id=set_id,
+                                     set_revision=reference_set["revision"], set_name=reference_set["name"],
+                                     images=images, audio=audio).model_dump()
+        if (shot.get("ref_images") or shot.get("ref_audio")) and not snapshot_matches(snapshot, shot) and not data.replace_existing:
+            raise HTTPException(409, "shot already has references; confirm replace_existing explicitly")
+        for asset in images + audio:
+            validate_asset(asset, UPLOADS)
+        updated_shot = {**shot, "ref_images": [a["filename"] for a in images],
+                        "ref_audio": [a["filename"] for a in audio], "reference_snapshot": snapshot}
+        return commit_reference_board(board, {**board, "shots": [
+            updated_shot if s["id"] == shot_id else s for s in board["shots"]]})
+
+
 @app.post("/api/boards/{board_id}/duplicate")
 def duplicate_board(board_id: str):
     with lock:
@@ -873,6 +1134,11 @@ def duplicate_board(board_id: str):
         copy["status"] = "idle"
         copy["result"] = None
         copy["createdAt"] = copy["modifiedAt"] = now
+        # Immutable asset identities/files are shared; editable sets get new identities.
+        # Applied snapshots retain their original source board/set provenance.
+        for reference_set in copy.get("reference_sets", []):
+            reference_set["id"] = uuid.uuid4().hex
+            reference_set["revision"] = 1
         for s in copy["shots"]:
             s["id"] = "s" + uuid.uuid4().hex[:6]
             s["_instance_id"] = uuid.uuid4().hex
@@ -912,7 +1178,9 @@ def run_board(board_id: str):
         for shot in board["shots"]:
             if shot["prompt"].strip():
                 try:
-                    warnings.extend(preflight(shot_request(board, shot)))
+                    req = shot_request(board, shot)
+                    validate_reference_snapshot(shot.get("reference_snapshot"), req)
+                    warnings.extend(preflight(req))
                 except HTTPException as exc:
                     raise HTTPException(exc.status_code, f"shot {shot['id']}: {exc.detail}") from exc
         run_id = uuid.uuid4().hex
@@ -1084,7 +1352,8 @@ def resume_job(job_id: str):
                               (original.get("chain_source") and not source_take_id))
         result = enqueue_job(req, source_take_id=source_take_id,
                              source_unknown=source_unknown,
-                             model_dir=original.get("model_dir"))
+                             model_dir=original.get("model_dir"),
+                             reference_snapshot=original.get("reference_snapshot"))
     launch_next()
     return result
 
@@ -1139,6 +1408,7 @@ def public_job(j: dict) -> dict:
             "checkpoint": j.get("checkpoint"),
             "take_id": j.get("take_id"), "source_take_id": j.get("source_take_id"),
             "source_unknown": j.get("source_unknown", False),
+            "reference_snapshot": j.get("reference_snapshot"),
             **({"warnings": j["warnings"]} if j.get("warnings") else {}),
             "params": req.model_dump(exclude={"prompt"})}
 
